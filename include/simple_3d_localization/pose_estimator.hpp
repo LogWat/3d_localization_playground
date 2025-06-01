@@ -11,7 +11,7 @@
 namespace s3l {
 
 namespace filter {
-template <typename T, class SystemModel> class UnscentedKalmanFilterX;
+template <typename T> class UnscentedKalmanFilterX;
 } // namespace filter
 
 class PoseSystem;
@@ -61,14 +61,14 @@ public:
     void predict_odom(const Eigen::Matrix4f& odom_delta);
 
     /**
-     * @brief update
+     * @brief correct
      * @param cloud   input cloud
      * @return cloud aligned to the globalmap
      */
-    pcl::PointCloud<PointT>::Ptr update(const rclcpp::Time& stamp, const pcl::PointCloud<PointT>::ConstPtr& cloud);
+    pcl::PointCloud<PointT>::Ptr correct(const rclcpp::Time& stamp, const pcl::PointCloud<PointT>::ConstPtr& cloud);
 
     /* getters */
-    rclcpp::Time last_update_time() const;
+    rclcpp::Time last_correct_time() const;
 
     Eigen::Vector3f pos() const;
     Eigen::Vector3f vel() const;
@@ -86,12 +86,12 @@ public:
 private:
     rclcpp::Time init_stamp_;             // when the estimator was initialized
     rclcpp::Time prev_stamp_;             // when the estimator was updated last time
-    rclcpp::Time last_update_stamp_;      // when the estimator performed the update step
+    rclcpp::Time last_correct_stamp_;      // when the estimator performed the correct step
     double cool_time_duration_;
 
     Eigen::MatrixXf process_noise_;
-    std::unique_ptr<filter::UnscentedKalmanFilterX<float, PoseSystem>> ukf_;
-    std::unique_ptr<filter::UnscentedKalmanFilterX<float, OdomSystem>> odom_ukf_;
+    std::unique_ptr<filter::UnscentedKalmanFilterX<float>> ukf_;
+    std::unique_ptr<filter::UnscentedKalmanFilterX<float>> odom_ukf_;
 
     Eigen::Matrix4f last_observation_;
     boost::optional<Eigen::Matrix4f> wo_pred_error_;

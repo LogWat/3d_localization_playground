@@ -9,7 +9,7 @@ namespace s3l {
  * @brief Definition of system to be estimated by ukf
  * @note state = [px, py, pz, vx, vy, vz, qw, qx, qy, qz, acc_bias_x, acc_bias_y, acc_bias_z, gyro_bias_x, gyro_bias_y, gyro_bias_z]
  */
-class PoseSystem : public s3l::SystemModel {
+class PoseSystem : public SystemModel {
 public:
     PoseSystem() {
         dt_ = 0.01;

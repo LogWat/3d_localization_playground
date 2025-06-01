@@ -23,6 +23,13 @@ public:
     virtual VectorXt f(const VectorXt& state) const = 0;
     virtual VectorXt f(const VectorXt& state, const VectorXt& control) const = 0;
     virtual VectorXt h(const VectorXt& state) const = 0;
+
+    void setDt(double dt) {
+        dt_ = dt;
+    }
+
+private:
+    double dt_ = 0.1; // time step in seconds
 };
 
 } // namespace s3l

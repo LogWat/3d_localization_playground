@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ukf.hpp>
+#include <system_model.hpp>
 
 namespace s3l {
 
@@ -10,17 +11,9 @@ namespace s3l {
  *       observation = [px, py, pz, qw, qx, qy, qz]
  *       指数写像を用いた方法を導入したほうが良いかもしれない
  */
-class OdomSystem {
+class OdomSystem : public SystemModel {
 public:
-    using T = float;
-    using Vector3t = Eigen::Matrix<T, 3, 1>;
-    using Vector4t = Eigen::Matrix<T, 4, 1>;
-    using Matrix4t = Eigen::Matrix<T, 4, 4>;
-    using VectorXt = Eigen::Matrix<T, Eigen::Dynamic, 1>;
-    using Quaterniont = Eigen::Quaternion<T>;
-
-public:
-    VectorXt f(const VectorXt& state, const VectorXt& control) const {
+    VectorXt f(const VectorXt& state, const VectorXt& control) const override {
         Matrix4t pt = Matrix4t::Identity();
         pt.block<3, 1>(0, 3) = Vector3t(state(0), state(1), state(2));
         pt.block<3, 3>(0, 0) = Quaterniont(state(3), state(4), state(5), state(6)).normalized().toRotationMatrix();
@@ -39,8 +32,13 @@ public:
         return next_state;
     }
 
+    // 未定義
+    VectorXt f(const VectorXt& state) const override {
+        return f(state, VectorXt::Zero(7));
+    }
+
     // 観測モデル
-    VectorXt h(const VectorXt& state) const {
+    VectorXt h(const VectorXt& state) const override {
         return state;
     }
 };

@@ -9,13 +9,14 @@
 
 #include <random>
 #include <Eigen/Dense>
+#include <system_model.hpp>
 
 namespace s3l
 {
 namespace filter
 {
 
-template <typename T, class SystemModel>
+template <typename T>
 class UnscentedKalmanFilterX {
     typedef Eigen::Matrix<T, Eigen::Dynamic, 1> VectorXt;
     typedef Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> MatrixXt;
@@ -123,10 +124,10 @@ public:
 
 
     /**
-     * @brief Update the state and covariance of the system
+     * @brief Correct the state and covariance of the system
      * @param measurement measurement vector
      */
-    void update(const VectorXt& measurement) {
+    void correct(const VectorXt& measurement) {
         // error variancesを含む拡張状態空間を考慮
         VectorXt ext_mean_pred = VectorXt::Zero(N_ + K_, 1);
         MatrixXt ext_cov_pred = MatrixXt::Zero(N_ + K_, N_ + K_);
