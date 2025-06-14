@@ -1,9 +1,8 @@
-#include "simple_3d_localization/pose_estimator.hpp"
-#include "simple_3d_localization/odom_system.hpp"
-
 #include <pcl/filters/voxel_grid.h>
 #include <simple_3d_localization/pose_system.hpp>
 #include <simple_3d_localization/ukf.hpp>
+#include <simple_3d_localization/pose_estimator.hpp>
+#include <simple_3d_localization/odom_system.hpp>
 
 namespace s3l {
 
@@ -20,8 +19,8 @@ PoseEstimator::PoseEstimator(
     const Eigen::Quaternionf& quat,
     double cool_time_duration
 ): 
-    registration_(registration),
-    cool_time_duration_(cool_time_duration) 
+    cool_time_duration_(cool_time_duration),
+    registration_(registration)
 {
     last_observation_ = Eigen::Matrix4f::Identity();
     last_observation_.block<3, 3>(0, 0) = quat.toRotationMatrix();
@@ -50,9 +49,9 @@ PoseEstimator::PoseEstimator(
 
     Eigen::MatrixXf cov = Eigen::MatrixXf::Identity(16, 16) * 0.01;
 
-    PoseSystem system_model;
+    pose_system_model_ = std::make_unique<PoseSystem>();
     ukf_.reset(new filter::UnscentedKalmanFilterX<float>(
-        system_model,
+        *pose_system_model_,
         16,
         6,
         7,
@@ -84,7 +83,7 @@ void PoseEstimator::predict(const rclcpp::Time& stamp) {
     prev_stamp_ = stamp;
 
     ukf_->setProcessNoiseCov(process_noise_ * dt);
-    ukf_->system_model_.setDt(dt);
+    pose_system_model_->setDt(dt);
     ukf_->predict();
 }
 
@@ -108,7 +107,7 @@ void PoseEstimator::predict(const rclcpp::Time& stamp, const Eigen::Vector3f& ac
     prev_stamp_ = stamp;
 
     ukf_->setProcessNoiseCov(process_noise_ * dt);
-    ukf_->system_model_.setDt(dt);
+    pose_system_model_->setDt(dt);
     Eigen::VectorXf control(6);
     control.middleRows(0, 3) = acc;
     control.middleRows(3, 3) = gyro;
@@ -130,9 +129,9 @@ void PoseEstimator::predict_odom(const Eigen::Matrix4f& odom_delta) {
         odom_mean.block<4, 1>(3, 0) = Eigen::Vector4f(ukf_->mean_[6], ukf_->mean_[7], ukf_->mean_[8], ukf_->mean_[9]).normalized();
         Eigen::MatrixXf odom_cov = Eigen::MatrixXf::Identity(7, 7) * 1e-2;
 
-        OdomSystem odom_system;
+        odom_system_model_ = std::make_unique<OdomSystem>();
         odom_ukf_.reset(new filter::UnscentedKalmanFilterX<float>(
-            odom_system,
+            *odom_system_model_,
             7,  // state dimension
             7,  // input dimension
             7,  // measurement dimension
@@ -216,7 +215,7 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const rclcpp:
 
     Eigen::Matrix4f trans = registration_->getFinalTransformation();
     Eigen::Vector3f p = trans.block<3, 1>(0, 3);
-    Eigen::Quaternionf q(trans.block<3, 1>(0, 0));
+    Eigen::Quaternionf q(trans.block<3, 3>(0, 0));
 
     if (quat().coeffs().dot(q.coeffs()) < 0.0f) q.coeffs() *= -1.0f; // quaternionの符号を合わせる
 
