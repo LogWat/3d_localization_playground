@@ -27,9 +27,15 @@ set(msg_files
   "msg/ScanMatchingStatus.msg"
 )
 
+set(srv_files
+  "srv/QueryGlobalLocalization.srv"
+  "srv/SetGlobalMap.srv"
+)
+
 rosidl_generate_interfaces(${PROJECT_NAME}
   ${msg_files}
-  DEPENDENCIES std_msgs geometry_msgs
+  ${srv_files}
+  DEPENDENCIES std_msgs geometry_msgs sensor_msgs
 )
 
 ament_package()
