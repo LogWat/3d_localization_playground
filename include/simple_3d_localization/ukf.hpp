@@ -9,7 +9,7 @@
 
 #include <random>
 #include <Eigen/Dense>
-#include <system_model.hpp>
+#include <simple_3d_localization/system_model.hpp>
 
 namespace s3l
 {
@@ -31,11 +31,12 @@ public:
         const VectorXt& mean,
         const MatrixXt& cov
     ) : state_dim_(state_dim),
+        input_dim_(input_dim),
         measurement_dim_(measurement_dim),
         N_(state_dim),
         M_(input_dim),
         K_(measurement_dim),
-        S_(2 * N + 1),
+        S_(2 * N_ + 1),
         mean_(mean),
         cov_(cov),
         system_model_(model),
@@ -51,11 +52,13 @@ public:
         expected_measurements_.resize(2 * (N_ + K_) + 1, K_);
 
         // Initialize weights for unscented filter
-        for (weights_(0) = lambda_ / (N_ + lambda_), int i = 1; i < 2 * N_ + 1; ++i) {
+        int i = 1;
+        for (weights_(0) = lambda_ / (N_ + lambda_); i < 2 * N_ + 1; ++i) {
             weights_(i) = 1.0 / (2 * (N_ + lambda_));
         }
         // weights for extended state space which includes error variances
-        for (ext_weights_(0) = lambda_ / (N_ + K_ + lambda_), int i = 1; i < 2 * (N_ + K_) + 1; ++i) {
+        i = 1;
+        for (ext_weights_(0) = lambda_ / (N_ + K_ + lambda_); i < 2 * (N_ + K_) + 1; ++i) {
             ext_weights_(i) = 1.0 / (2 * (N_ + K_ + lambda_));
         }
     }
@@ -76,7 +79,7 @@ public:
         const auto& R = process_noise_;
 
         // Unscented transformation
-        VectorXt mean_pred(mean.size());
+        VectorXt mean_pred(mean_.size());
         MatrixXt cov_pred(cov_.rows(), cov_.cols());
         mean_pred.setZero();
         cov_pred.setZero();
@@ -179,8 +182,7 @@ public:
     const VectorXt& getMean() const { return mean_; }
     const MatrixXt& getCov() const { return cov_; }
     const MatrixXt& getSigmaPoints() const { return sigma_points_; }
-    SystemModel& getSystemModel() { return system_model_; }
-    const SystemModel& getSystemModel() const { return system_model_; }
+    const SystemModel& getSystemModel() { return system_model_; }
     const MatrixXt& getProcessNoiseCov() const { return process_noise_; }
     const MatrixXt& getMeasurementNoiseCov() const { return measurement_noise_; }
     const MatrixXt& getKalmanGain() const { return kalman_gain_; }
@@ -242,7 +244,7 @@ public:
     VectorXt mean_;
     MatrixXt cov_;
 
-    SystemModel system_model_;
+    const SystemModel& system_model_;
     MatrixXt process_noise_;
     MatrixXt measurement_noise_;
 

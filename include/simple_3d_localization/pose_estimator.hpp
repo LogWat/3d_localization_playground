@@ -8,6 +8,8 @@
 #include <pcl/point_cloud.h>
 #include <pcl/registration/registration.h>
 
+#include <simple_3d_localization/pose_system.hpp>
+
 namespace s3l {
 
 namespace filter {
@@ -89,6 +91,12 @@ private:
     rclcpp::Time last_correct_stamp_;      // when the estimator performed the correct step
     double cool_time_duration_;
 
+    pcl::Registration<PointT, PointT>::Ptr registration_;
+
+    std::unique_ptr<PoseSystem> pose_system_model_;
+    std::unique_ptr<OdomSystem> odom_system_model_;
+
+
     Eigen::MatrixXf process_noise_;
     std::unique_ptr<filter::UnscentedKalmanFilterX<float>> ukf_;
     std::unique_ptr<filter::UnscentedKalmanFilterX<float>> odom_ukf_;
@@ -97,9 +105,6 @@ private:
     boost::optional<Eigen::Matrix4f> wo_pred_error_;
     boost::optional<Eigen::Matrix4f> imu_pred_error_;
     boost::optional<Eigen::Matrix4f> odom_pred_error_;
-
-    pcl::Registration<PointT, PointT>::Ptr registration_;
-
 };
 
 } // namespace simple_3d_localization

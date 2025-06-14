@@ -1,7 +1,7 @@
 #pragma once
 
-#include <ukf.hpp>
-#include <system_model.hpp>
+#include <simple_3d_localization/ukf.hpp>
+#include <simple_3d_localization/system_model.hpp>
 
 namespace s3l {
 
@@ -22,9 +22,6 @@ public:
         Vector3t vt = state.middleRows(3, 3);
         Quaterniont qt(state(6), state(7), state(8), state(9));
         qt.normalize();
-
-        Vector3t acc_bias = state.middleRows(10, 3);
-        Vector3t gyro_bias = state.middleRows(13, 3);
 
         // position
         next_state.middleRows(0, 3) = pt + dt_ * vt;
