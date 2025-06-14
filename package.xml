@@ -16,6 +16,13 @@
   <depend>tf2_ros</depend>
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>pcl_conversions</depend>
+  <depend>tf2_eigen</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>rclcpp_components</depend>
+  <depend>std_srvs</depend>
+  <depend>small_gicp</depend>
+  <depend>fast_gicp</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
