@@ -48,11 +48,11 @@ public:
         odom_child_frame_id_ = this->declare_parameter<std::string>("odom_child_frame_id", "base_link");
         reg_method_ = this->declare_parameter<std::string>("registration_method", "ndt"); // "ndt_cuda", "ndt_omp", "gicp", "vgicp"
         ndt_neighbor_search_method_ = this->declare_parameter<std::string>("ndt_neighbor_search_method", "DIRECT7");
-        use_imu_ = this->declare_parameter<bool>("use_imu", false);
+        use_imu_ = this->declare_parameter<bool>("use_imu", true);
         invert_acc_ = this->declare_parameter<bool>("invert_acc", false);
         invert_gyro_ = this->declare_parameter<bool>("invert_gyro", false);
         use_omp_ = this->declare_parameter<bool>("use_omp", true);
-        odometry_based_prediction_ = this->declare_parameter<bool>("odometry_based_prediction", true);
+        odometry_based_prediction_ = this->declare_parameter<bool>("odometry_based_prediction", false);
         downsample_leaf_size_ = this->declare_parameter<double>("downsample_leaf_size", 0.1);
         gicp_correspondence_randomness_ = this->declare_parameter<int>("gicp_correspondence_randomness", 20);
         gicp_max_correspondence_distance_ = this->declare_parameter<double>("gicp_max_correspondence_distance", 1.0);
@@ -134,132 +134,14 @@ public:
 
 
 private:
-    // callbacks -------------------------------------------------------------------------------------
-    void imuCallback(const sensor_msgs::msg::Imu::ConstSharedPtr& msg) {
-        std::lock_guard<std::mutex> lock(imu_buffer_mutex_);
-        imu_buffer_.push_back(msg);
-    }
-    void pointsCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
-        if(!globalmap_) {
-            RCLCPP_WARN(this->get_logger(), "Global map is not set yet. Ignoring point cloud.");
-            return;
-        }
-
-        const auto& stamp = msg->header.stamp;
-        PointCloudT::Ptr pcl_cloud(new PointCloudT);
-        pcl::fromROSMsg(*msg, *pcl_cloud);
-
-        if (pcl_cloud->empty()) {
-            RCLCPP_WARN(this->get_logger(), "Received empty point cloud. Ignoring.");
-            return;
-        }
-
-        // transform pointcloud into odom_child_frame_id
-        PointCloudT::Ptr cloud(new PointCloudT);
-        try {
-            geometry_msgs::msg::TransformStamped transform = tf_buffer_.lookupTransform(
-                robot_odom_frame_id_, odom_child_frame_id_, stamp, rclcpp::Duration::from_seconds(0.1));
-            pcl_ros::transformPointCloud(*pcl_cloud, *cloud, transform);
-        } catch (const tf2::TransformException & ex) {
-            RCLCPP_ERROR(this->get_logger(), "Failed to transform point cloud: %s", ex.what());
-            return;
-        }
-
-        // downsample point cloud
-        PointCloudT::Ptr downsampled_cloud(new PointCloudT);
-        if (use_omp_) {
-            downsampled_cloud = small_gicp::voxelgrid_sampling_omp(*cloud, downsample_leaf_size_);
-        } else if (downsampler_) {
-            downsampler_->setInputCloud(cloud);
-            downsampler_->filter(*downsampled_cloud);
-        } else {
-            RCLCPP_WARN(this->get_logger(), "Downsampler is not set. Using original point cloud.");
-            downsampled_cloud = cloud;
-        }
-        last_scan_ = downsampled_cloud;
-
-        if (relocalizing_) delta_estimater_->add_frame(downsampled_cloud);
-
-        // pose estimation (kalman filter)
-        std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
-        if (!pose_estimator_) {
-            RCLCPP_ERROR(this->get_logger(), "Waiting for initial pose input!");
-            return;
-        }
-        // Eigen::Matrix4f before_pose = pose_estimator_->matrix();
-        if (!use_imu_) {
-            pose_estimator_->predict(stamp);
-        } else {
-            std::lock_guard<std::mutex> lock(imu_buffer_mutex_);
-            auto imu_iter = imu_buffer_.begin();
-            for (; imu_iter != imu_buffer_.end(); ++imu_iter) {
-                const auto& imu_msg = *imu_iter;
-                if (rclcpp::Time(imu_msg->header.stamp) > stamp) {
-                    break; // imu messages are sorted by timestamp
-                }
-                Eigen::Vector3f acc(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
-                Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
-                if (invert_acc_) acc = -acc;
-                if (invert_gyro_) gyro = -gyro;
-                pose_estimator_->predict(stamp, acc, gyro);
-            }
-            imu_buffer_.erase(imu_buffer_.begin(), imu_iter); // remove processed imu messages
-        }
-
-        // odometry-based prediction
-        rclcpp::Time last_correction_time = pose_estimator_->last_correct_time();
-        if (odometry_based_prediction_ && last_correction_time > rclcpp::Time(0)) {
-            try {
-                geometry_msgs::msg::TransformStamped odom_transform = tf_buffer_.lookupTransform(
-                    robot_odom_frame_id_, odom_child_frame_id_, last_correction_time, rclcpp::Duration::from_seconds(0.1));
-                Eigen::Matrix4f odom_delta = tf2::transformToEigen(odom_transform).matrix().cast<float>();
-                pose_estimator_->predict_odom(odom_delta);
-            } catch (const tf2::TransformException & ex) {
-                RCLCPP_ERROR(this->get_logger(), "Failed to get odometry transform: %s", ex.what());
-            }
-        }
-
-        // correct
-        auto aligned = pose_estimator_->correct(stamp, downsampled_cloud);
-    }
-
-    void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg) {
-        RCLCPP_INFO(this->get_logger(), "Initial pose received!");
-        std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
-        const auto& p = msg->pose.pose.position;
-        const auto& q = msg->pose.pose.orientation;
-        pose_estimator_.reset(new s3l::PoseEstimator(
-            registration_,
-            Eigen::Vector3f(p.x, p.y, p.z),
-            Eigen::Quaternionf(q.w, q.x, q.y, q.z),
-            this->declare_parameter<double>("cool_time_duration", 0.5)
-        ));
-    }
-
-    void globalMapCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
-        RCLCPP_INFO(this->get_logger(), "Global map received!");
-        globalmap_ = std::make_shared<pcl::PointCloud<PointT>>();
-        pcl::fromROSMsg(*msg, *globalmap_);
-        registration_->setInputTarget(globalmap_);
-
-        // if (use_globlal_localization_) {
-        //     RCLCPP_INFO(this->get_logger(), "Global localization is enabled. Waiting for initial pose input.");
-        //     relocalizing_ = true;
-        //     delta_estimater_->reset();
-        // } else {
-        //     relocalizing_ = false;
-        // }
-
-    }
-
-    // ---------------------------------------------------------------------------------------------
+ // ---------------------------------------------------------------------------------------------
     // helper functions
 
     void relocalize(
         const std_srvs::srv::Empty::Request::SharedPtr req,
         std_srvs::srv::Empty::Response::SharedPtr res) {
         (void)req; // 未使用の警告を抑制
-        (void)res; // 未使用の警告を抑制
+        (void)res;
         if (last_scan_ == nullptr) {
             RCLCPP_ERROR(this->get_logger(), "No last scan available for relocalization.");
             return;
@@ -278,8 +160,9 @@ private:
         if (reg_method_ == "ndt_omp") {
             RCLCPP_INFO(this->get_logger(), "NDT_OMP is selected");
             pclomp::NormalDistributionsTransform<PointT, PointT>::Ptr ndt_omp(new pclomp::NormalDistributionsTransform<PointT, PointT>());
-            ndt_omp->setTransformationEpsilon(0.01);
+            ndt_omp->setTransformationEpsilon(0.0);
             ndt_omp->setResolution(ndt_resolution_);
+            ndt_omp->setNumThreads(num_threads_);
             if (ndt_neighbor_search_method_ == "DIRECT1") {
                 ndt_omp->setNeighborhoodSearchMethod(pclomp::DIRECT1);
             } else if (ndt_neighbor_search_method_ == "DIRECT7") {
@@ -295,9 +178,9 @@ private:
             RCLCPP_INFO(this->get_logger(), "NDT_CUDA is selected");
             std::shared_ptr<fast_gicp::NDTCuda<PointT, PointT>> ndt(new fast_gicp::NDTCuda<PointT, PointT>());
             ndt->setResolution(ndt_resolution_);
-            if (reg_method_ == "D2D") {
+            if (ndt_neighbor_search_method_ == "D2D") {
                 ndt->setDistanceMode(fast_gicp::NDTDistanceMode::D2D);
-            } else if (reg_method_ == "P2D") {
+            } else if (ndt_neighbor_search_method_ == "P2D") {
                 ndt->setDistanceMode(fast_gicp::NDTDistanceMode::P2D);
             } else {
                 RCLCPP_ERROR(this->get_logger(), "Unknown NDT distance mode: %s", reg_method_.c_str());
@@ -321,6 +204,7 @@ private:
             gicp->setCorrespondenceRandomness(gicp_correspondence_randomness_);
             gicp->setVoxelResolution(gicp_voxel_resolution_);
             gicp->setRegistrationType(reg_method_ == "gicp" ? "GICP" : "VGICP");
+            gicp->setMaximumIterations(100);
             return gicp;
         } else {
             RCLCPP_ERROR(this->get_logger(), "Unknown registration method: %s", reg_method_.c_str());
@@ -350,9 +234,7 @@ private:
             odom_trans.child_frame_id = odom_child_frame_id_;
             tf_broadcaster_->sendTransform(odom_trans);
         } catch (const tf2::TransformException & ex) {
-            RCLCPP_ERROR(this->get_logger(), "Failed to get transform from %s to %s: %s",
-                         robot_odom_frame_id_.c_str(), odom_child_frame_id_.c_str(), ex.what());
-            geometry_msgs::msg::TransformStamped odom_trans = tf2::eigenToTransform(Eigen::Isometry3d(pose.inverse().cast<double>()));
+            geometry_msgs::msg::TransformStamped odom_trans = tf2::eigenToTransform(Eigen::Isometry3d(pose.cast<double>()));
             odom_trans.header.stamp = stamp;
             odom_trans.header.frame_id = "map";
             odom_trans.child_frame_id = odom_child_frame_id_;
@@ -421,6 +303,147 @@ private:
         status_pub_->publish(status);
     }
 
+    // callbacks -------------------------------------------------------------------------------------
+    void imuCallback(const sensor_msgs::msg::Imu::ConstSharedPtr& msg) {
+        std::lock_guard<std::mutex> lock(imu_buffer_mutex_);
+        imu_buffer_.push_back(msg);
+    }
+    void pointsCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
+        if(!globalmap_) {
+            RCLCPP_WARN(this->get_logger(), "Global map is not set yet. Ignoring point cloud.");
+            return;
+        }
+
+        const auto & stamp = rclcpp::Time(msg->header.stamp.sec, msg->header.stamp.nanosec);
+        PointCloudT::Ptr pcl_cloud(new PointCloudT);
+        pcl::fromROSMsg(*msg, *pcl_cloud);
+
+        if (pcl_cloud->empty()) {
+            RCLCPP_WARN(this->get_logger(), "Received empty point cloud. Ignoring.");
+            return;
+        }
+
+        // transform pointcloud into odom_child_frame_id
+        PointCloudT::Ptr cloud(new PointCloudT);
+        try {
+            geometry_msgs::msg::TransformStamped transform = tf_buffer_.lookupTransform(
+                odom_child_frame_id_, msg->header.frame_id, stamp, rclcpp::Duration::from_seconds(0.1));
+            pcl_ros::transformPointCloud(*pcl_cloud, *cloud, transform);
+        } catch (const tf2::TransformException & ex) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to transform point cloud: %s", ex.what());
+            return;
+        }
+
+        // downsample point cloud
+        PointCloudT::Ptr downsampled_cloud(new PointCloudT);
+        if (use_omp_) {
+            downsampled_cloud = small_gicp::voxelgrid_sampling_omp(*cloud, downsample_leaf_size_);
+        } else if (downsampler_) {
+            downsampler_->setInputCloud(cloud);
+            downsampler_->filter(*downsampled_cloud);
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Downsampler is not set. Using original point cloud.");
+            downsampled_cloud = cloud;
+        }
+        last_scan_ = downsampled_cloud;
+
+        if (relocalizing_) delta_estimater_->add_frame(downsampled_cloud);
+
+        // pose estimation (kalman filter)
+        std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
+        if (!pose_estimator_) {
+            RCLCPP_ERROR(this->get_logger(), "Waiting for initial pose input!");
+            return;
+        }
+        // Eigen::Matrix4f before_pose = pose_estimator_->matrix();
+        if (!use_imu_) {
+            pose_estimator_->predict(stamp);
+        } else {
+            std::lock_guard<std::mutex> lock(imu_buffer_mutex_);
+            auto imu_iter = imu_buffer_.begin();
+            for (; imu_iter != imu_buffer_.end(); ++imu_iter) {
+                const auto& imu_msg = *imu_iter;
+                const auto& imu_stamp = rclcpp::Time(imu_msg->header.stamp.sec, imu_msg->header.stamp.nanosec);
+                if (imu_stamp > stamp) break;
+                Eigen::Vector3f acc(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
+                Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
+                if (invert_acc_) acc = -acc;
+                if (invert_gyro_) gyro = -gyro;
+                pose_estimator_->predict(stamp, acc, gyro);
+            }
+            imu_buffer_.erase(imu_buffer_.begin(), imu_iter); // remove processed imu messages
+        }
+
+        // odometry-based prediction
+        rclcpp::Time last_correction_time = pose_estimator_->last_correct_time();
+        if (odometry_based_prediction_ && last_correction_time > rclcpp::Time(0)) {
+            try {
+                geometry_msgs::msg::TransformStamped odom_transform = tf_buffer_.lookupTransform(
+                    robot_odom_frame_id_, odom_child_frame_id_, last_correction_time, rclcpp::Duration::from_seconds(0.1));
+                Eigen::Matrix4f odom_delta = tf2::transformToEigen(odom_transform).matrix().cast<float>();
+                pose_estimator_->predict_odom(odom_delta);
+            } catch (const tf2::TransformException & ex) {
+                RCLCPP_ERROR(this->get_logger(), "Failed to get odometry transform: %s", ex.what());
+            }
+        }
+
+        // correct
+        auto aligned = pose_estimator_->correct(stamp, downsampled_cloud);
+
+        if (aligned_pub_->get_subscription_count() > 0) {
+            sensor_msgs::msg::PointCloud2 aligned_msg;
+            pcl::toROSMsg(*aligned, aligned_msg);
+            aligned_msg.header.frame_id = "map";
+            aligned_msg.header.stamp = stamp;
+            aligned_pub_->publish(aligned_msg);
+        }
+        if (status_pub_->get_subscription_count() > 0) {
+            publishScanMatchingStatus(msg->header, aligned);
+        }
+
+        publishOdometry(msg->header.stamp, pose_estimator_->matrix());
+    }
+
+    void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg) {
+        RCLCPP_INFO(this->get_logger(), "Initial pose received!");
+        std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
+        const auto& p = msg->pose.pose.position;
+        const auto& q = msg->pose.pose.orientation;
+        pose_estimator_.reset(new s3l::PoseEstimator(
+            registration_,
+            Eigen::Vector3f(p.x, p.y, p.z),
+            Eigen::Quaternionf(q.w, q.x, q.y, q.z),
+            this->declare_parameter<double>("cool_time_duration", 0.5)
+        ));
+    }
+
+    void globalMapCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
+        RCLCPP_INFO(this->get_logger(), "Global map received!");
+        globalmap_ = std::make_shared<pcl::PointCloud<PointT>>();
+        pcl::fromROSMsg(*msg, *globalmap_);
+        RCLCPP_INFO(this->get_logger(), "Registration ptr: %p", registration_.get());
+        registration_->setInputTarget(globalmap_);
+
+        if (use_globlal_localization_) {
+            RCLCPP_INFO(this->get_logger(), "Global localization is enabled. Waiting for initial pose input.");
+            simple_3d_localization::srv::SetGlobalMap::Request req;
+            simple_3d_localization::srv::SetGlobalMap::Response res;
+            req.global_map = *msg;
+            if (set_globalmap_client_->wait_for_service(std::chrono::seconds(5))) {
+                auto future = set_globalmap_client_->async_send_request(std::make_shared<simple_3d_localization::srv::SetGlobalMap::Request>(req));
+                if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future) != rclcpp::FutureReturnCode::SUCCESS) {
+                    RCLCPP_ERROR(this->get_logger(), "Failed to call SetGlobalMap service.");
+                } else {
+                    RCLCPP_INFO(this->get_logger(), "Global map set successfully.");
+                }
+            } else {
+                RCLCPP_ERROR(this->get_logger(), "SetGlobalMap service is not available.");
+            }
+        }
+
+        // subscriber shutdown
+        globalmap_sub_.reset();
+    }
 
     // variables ------------------------------------------------------------------------------------
     std::string robot_odom_frame_id_, odom_child_frame_id_;

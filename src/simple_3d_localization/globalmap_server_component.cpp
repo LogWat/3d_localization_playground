@@ -56,7 +56,7 @@ public:
         globalmap_ = filtered;
         RCLCPP_INFO(this->get_logger(), "Global map loaded with %zu points", globalmap_->size());
 
-        globalmap_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("globalmap", rclcpp::QoS(5).transient_local());
+        globalmap_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("globalmap", rclcpp::QoS(1).transient_local());
         globalmap_update_sub_ = this->create_subscription<std_msgs::msg::String>(
             "/map_request/pointcloud", rclcpp::QoS(10),
             std::bind(&GlobalmapServerComponent::globalmapUpdateCallback, this, std::placeholders::_1));
@@ -64,7 +64,6 @@ public:
         globalmap_pub_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(1000),
             std::bind(&GlobalmapServerComponent::publishGlobalMap, this));
-
     }
 
     GlobalmapServerComponent(const rclcpp::NodeOptions & options, std::string & node_name);
@@ -77,7 +76,7 @@ private:
         }
         sensor_msgs::msg::PointCloud2 msg;
         pcl::toROSMsg(*globalmap_, msg);
-        msg.header.frame_id = globalmap_->header.frame_id;
+        msg.header.frame_id = "map";
         globalmap_pub_->publish(msg);
     }
 
