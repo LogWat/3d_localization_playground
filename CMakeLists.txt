@@ -22,6 +22,11 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_definitions(NDEBUG)
   endif()
 
+  # print compile options
+  message(STATUS "CMAKE_CXX_FLAGS: ${CMAKE_CXX_FLAGS}")
+  message(STATUS "CMAKE_CXX_FLAGS_RELEASE: ${CMAKE_CXX_FLAGS_RELEASE}")
+  message(STATUS "CMAKE_CXX_FLAGS_DEBUG: ${CMAKE_CXX_FLAGS_DEBUG}")
+
 endif()
 
 find_package(OpenMP)
@@ -57,7 +62,7 @@ find_package(PCL REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread)
 find_package(small_gicp REQUIRED)
-# find_package(pclomp REQUIRED)
+find_package(ndt_omp REQUIRED)
 find_package(fast_gicp REQUIRED)
 
 
@@ -126,7 +131,7 @@ target_include_directories(hdl_localization_component PUBLIC
   ${Eigen3_INCLUDE_DIRS}
   ${Boost_INCLUDE_DIRS}
   ${small_gicp_INCLUDE_DIRS} # 各ライブラリのインクルードパス (find_package で設定される想定)
-  # ${pclomp_INCLUDE_DIRS}
+  ${ndt_omp_INCLUDE_DIRS}
   ${fast_gicp_INCLUDE_DIRS}
 )
 ament_target_dependencies(hdl_localization_component
@@ -147,7 +152,7 @@ target_link_libraries(hdl_localization_component
   Eigen3::Eigen
   Boost::system Boost::thread
   ${small_gicp_LIBRARIES}
-  # ${pclomp_LIBRARIES}
+  ${ndt_omp_LIBRARIES}
   ${fast_gicp_LIBRARIES}
 )
 install(TARGETS hdl_localization_component
@@ -162,9 +167,7 @@ install(DIRECTORY include/
 )
 
 # Install launch files 
-# install(
-#   DIRECTORY launch
-#   DESTINATION share/${PROJECT_NAME}
-# )
+install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
+install (DIRECTORY rviz DESTINATION share/${PROJECT_NAME})
 
 ament_package()
