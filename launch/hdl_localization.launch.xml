@@ -1,0 +1,48 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="use_sim_time" default="true"/>
+
+  <set_parameter name="use_sim_time" value="$(var use_sim_time)"/>
+  <group>
+    <node_container pkg="rclcpp_components" exec="component_container_mt" name="hdl_localization_container" namespace="" output="screen">
+      <composable_node pkg="simple_3d_localization" plugin="s3l::GlobalmapServerComponent" name="globalmap_server_component" namespace="">
+        <param name="globalmap_pcd" value="pointcloud_map.pcd"/>
+        <param name="convert_utm_to_local" value="false"/>
+        <param name="downsample_resolution" value="0.2"/>
+        <param name="use_downsample_omp" value="true"/>
+        <extra_arg name="use_intra_process_comms" value="false" />
+      </composable_node>
+      <composable_node pkg="simple_3d_localization" plugin="s3l::HdlLocalizationComponent" name="hdl_localization_component" namespace="">
+        <param name="robot_odom_frame_id" value="odom"/>
+        <param name="odom_child_frame_id" value="base_link"/>
+        <param name="registration_method" value="vgicp"/> <!-- "ndt_cuda", "ndt_omp", "gicp", "vgicp" -->
+        <param name="ndt_neighbor_search_method" value="DIRECT7"/> <!-- "DIRECT1", "DIRECT7", "KDTREE" -->
+        <param name="use_imu" value="true"/>
+        <param name="invert_acc" value="false"/>
+        <param name="invert_gyro" value="false"/>
+        <param name="use_omp" value="true"/>
+        <param name="odometry_based_prediction" value="false"/>
+        <param name="downsample_leaf_size" value="0.25"/>
+        <param name="gicp_correspondence_randomness" value="20"/>
+        <param name="gicp_max_correspondence_distance" value="2.5"/>
+        <param name="gicp_voxel_resolution" value="1.0"/>
+        <param name="num_threads" value="12"/>
+        <param name="ndt_neighbor_search_radius" value="2.0"/>
+        <param name="ndt_resolution" value="1.0"/>
+        <param name="use_global_localization" value="false"/>
+        <param name="specify_init_pose" value="false"/>
+        <param name="init_pose" value="[0.0, 0.0, 0.0]"/>
+        <param name="init_quat" value="[0.0, 0.0, 0.0, 1.0]"/>
+        <param name="cool_time_duration" value="0.5"/>
+        <extra_arg name="use_intra_process_comms" value="false" />
+        <remap from="imu/data" to="livox/imu"/>
+        <remap from="points_raw" to="velodyne_points"/>
+        <remap from="global_map" to="globalmap"/>
+        <remap from="initialpose" to="initialpose"/>
+        <!-- <remap from="aligned_points" to="aligned_points"/>
+        <remap from="odom" to="odom"/> -->
+        <!-- <remap from="scan_matching_status" to="scan_matching_status"/> -->
+      </composable_node>
+    </node_container>
+  </group>
+</launch>
