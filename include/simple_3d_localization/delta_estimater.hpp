@@ -27,7 +27,7 @@ public:
             return;
         }
 
-        reg_->setInputSource(last_frame_);
+        reg_->setInputTarget(last_frame_);
         reg_->setInputSource(frame);
         lock.unlock();
 

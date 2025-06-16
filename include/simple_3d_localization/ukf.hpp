@@ -51,12 +51,12 @@ public:
         ext_sigma_points_.resize(2 * (N_ + K_) + 1, N_ + K_);
         expected_measurements_.resize(2 * (N_ + K_) + 1, K_);
 
-        // Initialize weights for unscented filter
+        // Initialize weights
         int i = 1;
         for (weights_(0) = lambda_ / (N_ + lambda_); i < 2 * N_ + 1; ++i) {
             weights_(i) = 1.0 / (2 * (N_ + lambda_));
         }
-        // weights for extended state space which includes error variances
+        // 拡張状態空間の重みを計算
         i = 1;
         for (ext_weights_(0) = lambda_ / (N_ + K_ + lambda_); i < 2 * (N_ + K_) + 1; ++i) {
             ext_weights_(i) = 1.0 / (2 * (N_ + K_ + lambda_));
@@ -212,8 +212,8 @@ private:
 
         sigma_points.row(0) = mean;
         for (int i = 0; i < n; ++i) {
-            sigma_points.row(1 + i * 2) = mean + l.row(i);
-            sigma_points.row(2 + i * 2) = mean - l.row(i);
+            sigma_points.row(1 + i * 2) = mean + l.col(i);
+            sigma_points.row(2 + i * 2) = mean - l.col(i);
         }
     }
 

@@ -32,7 +32,8 @@ PoseEstimator::PoseEstimator(
     process_noise_.middleRows(0, 3) *= 1.0;
     process_noise_.middleRows(3, 3) *= 1.0;
     process_noise_.middleRows(6, 4) *= 0.5;
-    process_noise_.middleRows(10, 3) *= 1e-6;
+    process_noise_.middleRows(10, 3) *= 1e-3;
+    process_noise_.middleRows(13, 3) *= 1e-6;
 
     // 位置(3) + 姿勢(4) = 7
     Eigen::MatrixXf measurement_noise = Eigen::MatrixXf::Identity(7, 7);
@@ -43,7 +44,7 @@ PoseEstimator::PoseEstimator(
     Eigen::VectorXf mean(16);
     mean.middleRows(0, 3) = pos;
     mean.middleRows(3, 3).setZero();
-    mean.middleRows(6, 4) = Eigen::Vector4f(quat.x(), quat.y(), quat.z(), quat.w()).normalized();
+    mean.middleRows(6, 4) = Eigen::Vector4f(quat.w(), quat.x(), quat.y(), quat.z()).normalized();
     mean.middleRows(10, 3).setZero();
     mean.middleRows(13, 3).setZero();
 
@@ -109,8 +110,8 @@ void PoseEstimator::predict(const rclcpp::Time& stamp, const Eigen::Vector3f& ac
     ukf_->setProcessNoiseCov(process_noise_ * dt);
     pose_system_model_->setDt(dt);
     Eigen::VectorXf control(6);
-    control.middleRows(0, 3) = acc;
-    control.middleRows(3, 3) = gyro;
+    control.head<3>() = acc; // acceleration
+    control.tail<3>() = gyro; // angular velocity
     ukf_->predict(control);
 }
 
@@ -145,12 +146,12 @@ void PoseEstimator::predict_odom(const Eigen::Matrix4f& odom_delta) {
     // rotation axis が反転している場合は、符号を反転する
     Eigen::Quaternionf quat(odom_delta.block<3, 3>(0, 0));
     if (odom_quat().coeffs().dot(quat.coeffs()) < 0) {
-        quat.coeffs() *= -1;
+        quat.coeffs() *= -1.0f; // quaternionの符号を合わせる
     }
 
     Eigen::VectorXf odom_control(7);
-    odom_control.block<3, 1>(0, 0) = odom_delta.block<3, 1>(0, 3); // translation
-    odom_control.block<4, 1>(3, 0) = Eigen::Vector4f(quat.x(), quat.y(), quat.z(), quat.w()).normalized(); // rotation
+    odom_control.middleRows(0, 3) = odom_delta.block<3, 1>(0, 3); // translation
+    odom_control.middleRows(3, 4) = Eigen::Vector4f(quat.w(), quat.x(), quat.y(), quat.z()).normalized(); // rotation
 
     process_noise_.topLeftCorner(3, 3) = Eigen::Matrix3f::Identity() * odom_delta.block<3, 1>(0, 3).norm() + Eigen::Matrix3f::Identity() * 1e-3;
     process_noise_.bottomRightCorner(4, 4) = Eigen::Matrix4f::Identity() * (1 - std::abs(quat.w())) + Eigen::Matrix4f::Identity() * 1e-3;
@@ -173,8 +174,8 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const rclcpp:
     last_correct_stamp_ = stamp;
 
     Eigen::Matrix4f no_guess = last_observation_;
-    Eigen::Matrix4f imu_guess = Eigen::Matrix4f::Identity();
-    Eigen::Matrix4f odom_guess = Eigen::Matrix4f::Identity();
+    Eigen::Matrix4f imu_guess;
+    Eigen::Matrix4f odom_guess;
     Eigen::Matrix4f init_guess = Eigen::Matrix4f::Identity();
 
     if (!odom_ukf_) {
@@ -184,7 +185,7 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const rclcpp:
         odom_guess = odom_matrix();
 
         Eigen::VectorXf imu_mean(7);
-        Eigen::MatrixXf imu_cov  = Eigen::MatrixXf::Identity(7, 7);
+        Eigen::MatrixXf imu_cov = Eigen::MatrixXf::Identity(7, 7);
         imu_mean.block<3, 1>(0, 0) = ukf_->mean_.block<3, 1>(0, 0);
         imu_mean.block<4, 1>(3, 0) = ukf_->mean_.block<4, 1>(6, 0).normalized();
         imu_cov.block<3, 3>(0, 0) = ukf_->cov_.block<3, 3>(0, 0);
@@ -206,12 +207,12 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const rclcpp:
         Eigen::VectorXf fused_mean = fused_cov * inv_imu_cov * imu_mean + fused_cov * inv_odom_cov * odom_mean;
 
         init_guess.block<3, 1>(0, 3) = Eigen::Vector3f(fused_mean[0], fused_mean[1], fused_mean[2]);
-        init_guess.block<3, 3>(0, 0) = Eigen::Quaternionf(fused_mean[6], fused_mean[7], fused_mean[8], fused_mean[9]).normalized().toRotationMatrix();
+        init_guess.block<3, 3>(0, 0) = Eigen::Quaternionf(fused_mean[3], fused_mean[4], fused_mean[5], fused_mean[6]).normalized().toRotationMatrix();
     }
 
     pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
     registration_->setInputSource(cloud);
-    registration_->align(*aligned, init_guess);
+    registration_->align(*aligned, init_guess); // 事前に設定されているregistration方法でalign (NDT_CUDA, GICP, etc.)
 
     Eigen::Matrix4f trans = registration_->getFinalTransformation();
     Eigen::Vector3f p = trans.block<3, 1>(0, 3);
@@ -221,7 +222,7 @@ pcl::PointCloud<PoseEstimator::PointT>::Ptr PoseEstimator::correct(const rclcpp:
 
     Eigen::VectorXf observation(7);
     observation.middleRows(0, 3) = p;
-    observation.middleRows(3, 4) = Eigen::Vector4f(q.x(), q.y(), q.z(), q.w()).normalized();
+    observation.middleRows(3, 4) = Eigen::Vector4f(q.w(), q.x(), q.y(), q.z()).normalized();
     last_observation_ = trans;
 
     wo_pred_error_ = no_guess.inverse() * registration_->getFinalTransformation();
