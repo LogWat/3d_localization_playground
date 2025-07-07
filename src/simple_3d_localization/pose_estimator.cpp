@@ -14,7 +14,7 @@ namespace s3l {
  * @param cool_time_duration  during "cool time", prediction is not performed
  */
 PoseEstimator::PoseEstimator(
-    pcl::Registration<PointT, PointT>::Ptr& registration,
+    boost::shared_ptr<pcl::Registration<PointT, PointT>>& registration,
     const Eigen::Vector3f& pos,
     const Eigen::Quaternionf& quat,
     double cool_time_duration
@@ -33,7 +33,7 @@ PoseEstimator::PoseEstimator(
     process_noise_.middleRows(3, 3) *= 1.0;
     process_noise_.middleRows(6, 4) *= 0.5;
     process_noise_.middleRows(10, 3) *= 1e-3;
-    process_noise_.middleRows(13, 3) *= 1e-6;
+    process_noise_.middleRows(13, 3) *= 1e-5;
 
     // 位置(3) + 姿勢(4) = 7
     Eigen::MatrixXf measurement_noise = Eigen::MatrixXf::Identity(7, 7);

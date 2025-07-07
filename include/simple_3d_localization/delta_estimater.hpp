@@ -11,7 +11,7 @@ class DeltaEstimater {
 public:
     using PointT = pcl::PointXYZI;
     
-    DeltaEstimater(pcl::Registration<PointT, PointT>::Ptr reg): delta_(Eigen::Isometry3f::Identity()), reg_(reg) {}
+    DeltaEstimater(boost::shared_ptr<pcl::Registration<PointT, PointT>> reg): delta_(Eigen::Isometry3f::Identity()), reg_(reg) {}
     ~DeltaEstimater() {}
 
     void reset() {
@@ -47,7 +47,7 @@ public:
 private:
     mutable std::mutex mutex_;
     Eigen::Isometry3f delta_;
-    pcl::Registration<PointT, PointT>::Ptr reg_;
+    boost::shared_ptr<pcl::Registration<PointT, PointT>> reg_;
     pcl::PointCloud<PointT>::ConstPtr last_frame_;
 };
 

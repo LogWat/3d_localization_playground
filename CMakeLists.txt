@@ -58,7 +58,7 @@ find_package(std_srvs REQUIRED)
 find_package(pcl_ros REQUIRED)
 
 # External libraries
-find_package(PCL REQUIRED)
+find_package(PCL 1.12 REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread)
 find_package(small_gicp REQUIRED)

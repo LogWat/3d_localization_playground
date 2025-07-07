@@ -1,10 +1,10 @@
 #include <mutex>
 #include <memory>
 #include <iostream>
+#include <boost/make_shared.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 #include <std_srvs/srv/set_bool.hpp>
-// #include <pcl_ros/point_cloud.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_ros/transforms.hpp>
 
@@ -46,7 +46,7 @@ public:
     : rclcpp::Node("s3l_hdl_localization", options), tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
         robot_odom_frame_id_ = this->declare_parameter<std::string>("robot_odom_frame_id", "odom");
         odom_child_frame_id_ = this->declare_parameter<std::string>("odom_child_frame_id", "base_link");
-        reg_method_ = this->declare_parameter<std::string>("registration_method", "ndt"); // "ndt_cuda", "ndt_omp", "gicp", "vgicp"
+        reg_method_ = this->declare_parameter<std::string>("registration_method", "ndt_omp"); // "ndt_cuda", "ndt_omp", "gicp", "vgicp"
         ndt_neighbor_search_method_ = this->declare_parameter<std::string>("ndt_neighbor_search_method", "DIRECT7");
         use_imu_ = this->declare_parameter<bool>("use_imu", true);
         invert_acc_ = this->declare_parameter<bool>("invert_acc", false);
@@ -58,6 +58,7 @@ public:
         gicp_max_correspondence_distance_ = this->declare_parameter<double>("gicp_max_correspondence_distance", 1.0);
         gicp_voxel_resolution_ = this->declare_parameter<double>("gicp_voxel_resolution", 1.0);
         num_threads_ = this->declare_parameter<int>("num_threads", 8);
+        cool_time_duration_ = this->declare_parameter<double>("cool_time_duration", 0.5);
 
         ndt_neightbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
         ndt_resolution_ = this->declare_parameter<double>("ndt_resolution", 1.0);
@@ -125,7 +126,7 @@ public:
             Eigen::Vector3f pos(init_pose[0], init_pose[1], init_pose[2]);
             Eigen::Quaternionf quat(init_quat[0], init_quat[1], init_quat[2], init_quat[3]);
             pose_estimator_ = std::make_unique<s3l::PoseEstimator>(
-                registration_, pos, quat, this->declare_parameter<double>("cool_time_duration", 0.5)
+                registration_, pos, quat, cool_time_duration_
             );
         }
     }
@@ -156,11 +157,12 @@ private:
 
 
 
-    pcl::Registration<PointT, PointT>::Ptr createRegistration() const {
+    boost::shared_ptr<pcl::Registration<PointT, PointT>> createRegistration() const {
         if (reg_method_ == "ndt_omp") {
             RCLCPP_INFO(this->get_logger(), "NDT_OMP is selected");
-            pclomp::NormalDistributionsTransform<PointT, PointT>::Ptr ndt_omp(new pclomp::NormalDistributionsTransform<PointT, PointT>());
-            ndt_omp->setTransformationEpsilon(0.0);
+            boost::shared_ptr<pclomp::NormalDistributionsTransform<PointT, PointT>> ndt_omp(new pclomp::NormalDistributionsTransform<PointT, PointT>());
+            
+            ndt_omp->setTransformationEpsilon(0.01);
             ndt_omp->setResolution(ndt_resolution_);
             ndt_omp->setNumThreads(num_threads_);
             if (ndt_neighbor_search_method_ == "DIRECT1") {
@@ -176,7 +178,7 @@ private:
             return ndt_omp;
         } else if (reg_method_ == "ndt_cuda") {
             RCLCPP_INFO(this->get_logger(), "NDT_CUDA is selected");
-            std::shared_ptr<fast_gicp::NDTCuda<PointT, PointT>> ndt(new fast_gicp::NDTCuda<PointT, PointT>());
+            boost::shared_ptr<fast_gicp::NDTCuda<PointT, PointT>> ndt(new fast_gicp::NDTCuda<PointT, PointT>());
             ndt->setResolution(ndt_resolution_);
             if (ndt_neighbor_search_method_ == "D2D") {
                 ndt->setDistanceMode(fast_gicp::NDTDistanceMode::D2D);
@@ -198,13 +200,13 @@ private:
             }
             return ndt;
         } else if (reg_method_ == "gicp" || reg_method_ == "vgicp") {
-            std::shared_ptr<small_gicp::RegistrationPCL<PointT, PointT>> gicp(new small_gicp::RegistrationPCL<PointT, PointT>());
+            boost::shared_ptr<small_gicp::RegistrationPCL<PointT, PointT>> gicp(new small_gicp::RegistrationPCL<PointT, PointT>());
             gicp->setNumThreads(num_threads_);
             gicp->setMaxCorrespondenceDistance(gicp_max_correspondence_distance_);
             gicp->setCorrespondenceRandomness(gicp_correspondence_randomness_);
             gicp->setVoxelResolution(gicp_voxel_resolution_);
             gicp->setRegistrationType(reg_method_ == "gicp" ? "GICP" : "VGICP");
-            gicp->setMaximumIterations(100);
+            gicp->setMaximumIterations(200);
             return gicp;
         } else {
             RCLCPP_ERROR(this->get_logger(), "Unknown registration method: %s", reg_method_.c_str());
@@ -413,15 +415,16 @@ private:
             registration_,
             Eigen::Vector3f(p.x, p.y, p.z),
             Eigen::Quaternionf(q.w, q.x, q.y, q.z),
-            this->declare_parameter<double>("cool_time_duration", 0.5)
+            cool_time_duration_
         ));
     }
 
     void globalMapCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
         RCLCPP_INFO(this->get_logger(), "Global map received!");
+        if (registration_ == nullptr) registration_ = createRegistration();
+
         globalmap_ = std::make_shared<pcl::PointCloud<PointT>>();
         pcl::fromROSMsg(*msg, *globalmap_);
-        RCLCPP_INFO(this->get_logger(), "Registration ptr: %p", registration_.get());
         registration_->setInputTarget(globalmap_);
 
         if (use_globlal_localization_) {
@@ -484,7 +487,7 @@ private:
     // globalmap and registration method
     pcl::PointCloud<PointT>::Ptr globalmap_;
     pcl::Filter<PointT>::Ptr downsampler_;
-    pcl::Registration<PointT, PointT>::Ptr registration_;
+    boost::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
     double downsample_leaf_size_;
 
     // pose estimator

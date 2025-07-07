@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <boost/optional.hpp>
+#include <boost/make_shared.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 #include <pcl/point_types.h>
@@ -35,7 +36,7 @@ public:
      * @param cool_time_duration    during "cool time", prediction is not performed
      */
     PoseEstimator(
-        pcl::Registration<PointT, PointT>::Ptr& registration,
+        boost::shared_ptr<pcl::Registration<PointT, PointT>>& registration,
         const Eigen::Vector3f& pos,
         const Eigen::Quaternionf& quat,
         double cool_time_duration = 1.0
@@ -91,7 +92,7 @@ private:
     rclcpp::Time last_correct_stamp_;      // when the estimator performed the correct step
     double cool_time_duration_;
 
-    pcl::Registration<PointT, PointT>::Ptr registration_;
+    boost::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
 
     std::unique_ptr<PoseSystem> pose_system_model_;
     std::unique_ptr<OdomSystem> odom_system_model_;
