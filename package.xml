@@ -5,7 +5,7 @@
   <version>0.0.0</version>
   <description>TODO: Package description</description>
   <maintainer email="watanabe-i@roboken.cs.tsukuba.ac.jp">LogWat</maintainer>
-  <license>TODO: License declaration</license>
+  <license>BSD-2-Clause</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
@@ -16,9 +16,11 @@
   <depend>tf2_ros</depend>
   <depend>nav_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>pcl_ros</depend>
   <depend>pcl_conversions</depend>
   <depend>tf2_eigen</depend>
   <depend>tf2_geometry_msgs</depend>
+  <depend>tf2_eigen_kdl</depend>
   <depend>rclcpp_components</depend>
   <depend>std_srvs</depend>
   <depend>ndt_omp</depend>
