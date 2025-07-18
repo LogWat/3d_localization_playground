@@ -1,48 +1,117 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="use_sim_time" default="true"/>
+  <let name="project_name" value="simple_3d_localization"/>
+  <let name="project_namespace" value="s3l"/>
+  <let name="project_share" value="$(find-pkg-share $(var project_name))"/>
+
+  <!-- global args -->
+  <arg name="namespace" default=""/>
+  <arg name="container_name" default="localization_container"/>
+  <arg name="container_thread_num" default="2"/>
+  <arg name="use_sim_time" default="false"/>
+
+  <!-- launch args -->
+  <!-- globalmap_server -->
+  <arg name="globalmap_pcd" default="$(var project_share)/maps/GlobalMap.pcd"/>
+  <arg name="convert_utm_to_local" default="false"/>
+  <arg name="downsample_resolution" default="0.2"/>
+  <arg name="use_downsample_omp" default="true"/>
+  <!-- hdl_localization -->
+  <arg name="robot_odom_frame_id" default="odom"/>
+  <arg name="odom_child_frame_id" default="base_link"/>
+  <arg name="registration_method" default="vgicp"/> <!-- "ndt_cuda", "ndt_omp", "gicp", "vgicp" -->
+  <arg name="ndt_neighbor_search_method" default="DIRECT7"/> <!-- "DIRECT1", "DIRECT7", "KDTREE" -->
+  <arg name="use_imu" default="true"/>
+  <arg name="invert_acc" default="false"/>
+  <arg name="invert_gyro" default="false"/>
+  <arg name="use_omp" default="true"/>
+  <arg name="odometry_based_prediction" default="false"/>
+  <arg name="downsample_leaf_size" default="0.2"/>
+  <arg name="gicp_correspondence_randomness" default="20"/>
+  <arg name="gicp_max_correspondence_distance" default="2.5"/>
+  <arg name="gicp_voxel_resolution" default="1.0"/>
+  <arg name="num_threads" default="8"/>
+  <arg name="ndt_neighbor_search_radius" default="2.0"/>
+  <arg name="ndt_resolution" default="1.0"/>
+  <arg name="use_global_localization" default="false"/>
+  <arg name="specify_init_pose" default="false"/>
+  <arg name="init_pose" default="[0.0, 0.0, 0.0]"/>
+  <arg name="init_quat" default="[0.0, 0.0, 0.0, 1.0]"/>
+  <arg name="cool_time_duration" default="0.5"/>
+  <arg name="use_intra_process_comms" default="false"/>
+
+  <!-- remap args -->
+  <arg name="imu_topic" default="imu/data"/>
+  <arg name="pointcloud_topic" default="velodyne_points"/>
+  <arg name="global_map_topic" default="globalmap"/>
+  <arg name="initialpose_topic" default="initialpose"/>
+  <arg name="aligned_points_topic" default="aligned_points"/>
+  <arg name="odom_topic" default="odom"/>
+  <arg name="scan_matching_status_topic" default="scan_matching_status"/>
 
   <set_parameter name="use_sim_time" value="$(var use_sim_time)"/>
+
   <group>
-    <node_container pkg="rclcpp_components" exec="component_container_mt" name="hdl_localization_container" namespace="" output="screen">
-      <composable_node pkg="simple_3d_localization" plugin="s3l::GlobalmapServerComponent" name="globalmap_server_component" namespace="">
-        <param name="globalmap_pcd" value="pointcloud_map.pcd"/>
-        <param name="convert_utm_to_local" value="false"/>
-        <param name="downsample_resolution" value="0.2"/>
-        <param name="use_downsample_omp" value="true"/>
-        <extra_arg name="use_intra_process_comms" value="false" />
-      </composable_node>
-      <composable_node pkg="simple_3d_localization" plugin="s3l::HdlLocalizationComponent" name="hdl_localization_component" namespace="">
-        <param name="robot_odom_frame_id" value="odom"/>
-        <param name="odom_child_frame_id" value="base_link"/>
-        <param name="registration_method" value="vgicp"/> <!-- "ndt_cuda", "ndt_omp", "gicp", "vgicp" -->
-        <param name="ndt_neighbor_search_method" value="DIRECT7"/> <!-- "DIRECT1", "DIRECT7", "KDTREE" -->
-        <param name="use_imu" value="true"/>
-        <param name="invert_acc" value="false"/>
-        <param name="invert_gyro" value="false"/>
-        <param name="use_omp" value="true"/>
-        <param name="odometry_based_prediction" value="false"/>
-        <param name="downsample_leaf_size" value="0.25"/>
-        <param name="gicp_correspondence_randomness" value="20"/>
-        <param name="gicp_max_correspondence_distance" value="2.5"/>
-        <param name="gicp_voxel_resolution" value="1.0"/>
-        <param name="num_threads" value="12"/>
-        <param name="ndt_neighbor_search_radius" value="2.0"/>
-        <param name="ndt_resolution" value="1.0"/>
-        <param name="use_global_localization" value="false"/>
-        <param name="specify_init_pose" value="false"/>
-        <param name="init_pose" value="[0.0, 0.0, 0.0]"/>
-        <param name="init_quat" value="[0.0, 0.0, 0.0, 1.0]"/>
-        <param name="cool_time_duration" value="0.5"/>
-        <extra_arg name="use_intra_process_comms" value="false" />
-        <remap from="imu/data" to="livox/imu"/>
-        <remap from="points_raw" to="velodyne_points"/>
-        <remap from="global_map" to="globalmap"/>
-        <remap from="initialpose" to="initialpose"/>
-        <!-- <remap from="aligned_points" to="aligned_points"/>
-        <remap from="odom" to="odom"/> -->
-        <!-- <remap from="scan_matching_status" to="scan_matching_status"/> -->
-      </composable_node>
+    <!-- コンテナの起動 -->
+    <node_container
+      pkg="rclcpp_components"
+      exec="component_container_mt"
+      namespace="$(var namespace)"
+      name="$(var container_name)"
+      output="screen">
+      <param name="thread_num" value="$(var container_thread_num)"/>
     </node_container>
+
+    <!-- global_map -->
+    <load_composable_node
+      target="$(var namespace)/$(var container_name)">
+
+      <composable_node
+          pkg="$(var project_name)"
+          plugin="$(var project_namespace)::map::GlobalmapServerNode"
+          name="globalmap_server_node">
+        <param name="globalmap_pcd" value="$(var globalmap_pcd)"/>
+        <param name="convert_utm_to_local" value="$(var convert_utm_to_local)"/>
+        <param name="downsample_resolution" value="$(var downsample_resolution)"/>
+        <param name="use_downsample_omp" value="$(var use_downsample_omp)"/>
+        <extra_arg name="use_intra_process_comms" value="$(var use_intra_process_comms)"/>
+        <remap from="globalmap" to="$(var global_map_topic)"/>
+      </composable_node>
+      <composable_node
+          pkg="$(var project_name)"
+          plugin="$(var project_namespace)::hdl_localization::LocalizationNode"
+          name="hdl_localization_node">
+        <param name="robot_odom_frame_id" value="$(var robot_odom_frame_id)"/>
+        <param name="odom_child_frame_id" value="$(var odom_child_frame_id)"/>
+        <param name="registration_method" value="$(var registration_method)"/>
+        <param name="ndt_neighbor_search_method" value="$(var ndt_neighbor_search_method)"/>
+        <param name="use_imu" value="$(var use_imu)"/>
+        <param name="invert_acc" value="$(var invert_acc)"/>
+        <param name="invert_gyro" value="$(var invert_gyro)"/>
+        <param name="use_omp" value="$(var use_omp)"/>
+        <param name="odometry_based_prediction" value="$(var odometry_based_prediction)"/>
+        <param name="downsample_leaf_size" value="$(var downsample_leaf_size)"/>
+        <param name="gicp_correspondence_randomness" value="$(var gicp_correspondence_randomness)"/>
+        <param name="gicp_max_correspondence_distance" value="$(var gicp_max_correspondence_distance)"/>
+        <param name="gicp_voxel_resolution" value="$(var gicp_voxel_resolution)"/>
+        <param name="num_threads" value="$(var num_threads)"/>
+        <param name="ndt_neighbor_search_radius" value="$(var ndt_neighbor_search_radius)"/>
+        <param name="ndt_resolution" value="$(var ndt_resolution)"/>
+        <param name="use_global_localization" value="$(var use_global_localization)"/>
+        <param name="specify_init_pose" value="$(var specify_init_pose)"/>
+        <param name="init_pose" value="$(var init_pose)"/>
+        <param name="init_quat" value="$(var init_quat)"/>
+        <param name="cool_time_duration" value="$(var cool_time_duration)"/>
+        <remap from="imu/data" to="$(var imu_topic)"/>
+        <remap from="points_raw" to="$(var pointcloud_topic)"/>
+        <remap from="global_map" to="$(var global_map_topic)"/>
+        <remap from="initialpose" to="$(var initialpose_topic)"/>
+        <remap from="aligned_points" to="$(var aligned_points_topic)"/>
+        <remap from="odom" to="$(var odom_topic)"/>
+        <remap from="scan_matching_status" to="$(var scan_matching_status_topic)"/>
+        <extra_arg name="use_intra_process_comms" value="$(var use_intra_process_comms)"/>
+      </composable_node>
+    </load_composable_node>
   </group>
+
 </launch>
