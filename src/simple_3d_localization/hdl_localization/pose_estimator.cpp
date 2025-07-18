@@ -1,10 +1,11 @@
 #include <pcl/filters/voxel_grid.h>
-#include <simple_3d_localization/pose_system.hpp>
-#include <simple_3d_localization/ukf.hpp>
-#include <simple_3d_localization/pose_estimator.hpp>
-#include <simple_3d_localization/odom_system.hpp>
+#include <simple_3d_localization/hdl_localization/pose_system.hpp>
+#include <simple_3d_localization/hdl_localization/ukf.hpp>
+#include <simple_3d_localization/hdl_localization/pose_estimator.hpp>
+#include <simple_3d_localization/hdl_localization/odom_system.hpp>
 
-namespace s3l {
+namespace s3l::hdl_localization
+{
 
 /**
  * @brief constructor
@@ -14,7 +15,7 @@ namespace s3l {
  * @param cool_time_duration  during "cool time", prediction is not performed
  */
 PoseEstimator::PoseEstimator(
-    boost::shared_ptr<pcl::Registration<PointT, PointT>>& registration,
+    std::shared_ptr<pcl::Registration<PointT, PointT>>& registration,
     const Eigen::Vector3f& pos,
     const Eigen::Quaternionf& quat,
     double cool_time_duration
@@ -272,16 +273,15 @@ Eigen::Matrix4f PoseEstimator::odom_matrix() const {
     mat.block<3, 1>(0, 3) = odom_pos();
     return mat;
 }
-const boost::optional<Eigen::Matrix4f>& PoseEstimator::wo_prediction_error() const {
+const std::optional<Eigen::Matrix4f>& PoseEstimator::wo_prediction_error() const {
     return wo_pred_error_;
 }
-const boost::optional<Eigen::Matrix4f>& PoseEstimator::imu_prediction_error() const {
+const std::optional<Eigen::Matrix4f>& PoseEstimator::imu_prediction_error() const {
     return imu_pred_error_;
 }
-const boost::optional<Eigen::Matrix4f>& PoseEstimator::odom_prediction_error() const {
+const std::optional<Eigen::Matrix4f>& PoseEstimator::odom_prediction_error() const {
     return odom_pred_error_;
 }
 
 
-} // namespace s3l
-
+} // namespace s3l::hdl_localization

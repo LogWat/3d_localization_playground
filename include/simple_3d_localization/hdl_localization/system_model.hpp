@@ -6,7 +6,8 @@
 
 #include <Eigen/Dense>
 
-namespace s3l {
+namespace s3l::hdl_localization
+{
 
 class SystemModel {
 public:
@@ -28,9 +29,9 @@ public:
         dt_ = dt;
     }
 
-private:
+protected:
     double dt_ = 0.1; // time step in seconds
 };
 
-} // namespace s3l
+} // namespace s3l::hdl_localization
 

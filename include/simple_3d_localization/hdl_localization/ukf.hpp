@@ -9,9 +9,9 @@
 
 #include <random>
 #include <Eigen/Dense>
-#include <simple_3d_localization/system_model.hpp>
+#include <simple_3d_localization/hdl_localization/system_model.hpp>
 
-namespace s3l
+namespace s3l::hdl_localization
 {
 namespace filter
 {
@@ -264,4 +264,4 @@ public:
 };
 
 } // namespace filter
-} // namespace s3l
+} // namespace s3l::hdl_localization

@@ -1,9 +1,10 @@
 #pragma once
 
-#include <simple_3d_localization/ukf.hpp>
-#include <simple_3d_localization/system_model.hpp>
+#include <simple_3d_localization/hdl_localization/ukf.hpp>
+#include <simple_3d_localization/hdl_localization/system_model.hpp>
 
-namespace s3l {
+namespace s3l::hdl_localization 
+{
 
 /**
  * @brief Definition of system to be estimated by ukf
@@ -11,7 +12,7 @@ namespace s3l {
  */
 class PoseSystem : public SystemModel {
 public:
-    PoseSystem() {
+    explicit PoseSystem() {
         dt_ = 0.01;
     }
 
@@ -87,4 +88,4 @@ public:
     double dt_; // time step
 };
 
-} // namespace s3l
+} // namespace s3l::hdl_localization

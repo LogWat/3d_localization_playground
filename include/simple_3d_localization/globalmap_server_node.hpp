@@ -16,14 +16,15 @@
 #include <small_gicp/pcl/pcl_point_traits.hpp>
 #include <small_gicp/util/downsampling_omp.hpp>
 
-namespace s3l {
+namespace s3l::map
+{
 
-class GlobalmapServerComponent : public rclcpp::Node {
+class GlobalmapServerNode : public rclcpp::Node {
 public:
     using PointT = pcl::PointXYZI;
     using PointCloudT = pcl::PointCloud<PointT>;
 
-    GlobalmapServerComponent(const rclcpp::NodeOptions & options)
+    GlobalmapServerNode(const rclcpp::NodeOptions & options)
     : Node("globalmap_server", options) 
     {
         std::string globalmap_pcd = this->declare_parameter<std::string>("globalmap_pcd", "");
@@ -59,14 +60,14 @@ public:
         globalmap_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("globalmap", rclcpp::QoS(1).transient_local());
         globalmap_update_sub_ = this->create_subscription<std_msgs::msg::String>(
             "/map_request/pointcloud", rclcpp::QoS(10),
-            std::bind(&GlobalmapServerComponent::globalmapUpdateCallback, this, std::placeholders::_1));
+            std::bind(&GlobalmapServerNode::globalmapUpdateCallback, this, std::placeholders::_1));
             
         globalmap_pub_timer_ = this->create_wall_timer(
             std::chrono::milliseconds(1000),
-            std::bind(&GlobalmapServerComponent::publishGlobalMap, this));
+            std::bind(&GlobalmapServerNode::publishGlobalMap, this));
     }
 
-    GlobalmapServerComponent(const rclcpp::NodeOptions & options, std::string & node_name);
+    GlobalmapServerNode(const rclcpp::NodeOptions & options, std::string & node_name);
 
 private:
     void publishGlobalMap() {
@@ -74,10 +75,10 @@ private:
             RCLCPP_WARN(this->get_logger(), "Global map is not set. Cannot publish.");
             return;
         }
-        sensor_msgs::msg::PointCloud2 msg;
-        pcl::toROSMsg(*globalmap_, msg);
-        msg.header.frame_id = "map";
-        globalmap_pub_->publish(msg);
+        sensor_msgs::msg::PointCloud2::UniquePtr msg(new sensor_msgs::msg::PointCloud2);
+        pcl::toROSMsg(*globalmap_, *msg);
+        msg->header.frame_id = "map";
+        globalmap_pub_->publish(std::move(msg));
     }
 
     void globalmapUpdateCallback(const std_msgs::msg::String::ConstSharedPtr& msg) {
@@ -111,7 +112,4 @@ private:
     rclcpp::TimerBase::SharedPtr globalmap_pub_timer_;
 };
 
-} // namespace s3l
-
-#include "rclcpp_components/register_node_macro.hpp"
-RCLCPP_COMPONENTS_REGISTER_NODE(s3l::GlobalmapServerComponent)
+} // namespace s3l::map

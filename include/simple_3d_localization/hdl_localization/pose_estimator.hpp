@@ -1,17 +1,16 @@
 #pragma once
 
 #include <memory>
-#include <boost/optional.hpp>
-#include <boost/make_shared.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 #include <pcl/point_types.h>
 #include <pcl/point_cloud.h>
 #include <pcl/registration/registration.h>
 
-#include <simple_3d_localization/pose_system.hpp>
+#include <simple_3d_localization/hdl_localization/pose_system.hpp>
 
-namespace s3l {
+namespace s3l::hdl_localization
+{
 
 namespace filter {
 template <typename T> class UnscentedKalmanFilterX;
@@ -36,7 +35,7 @@ public:
      * @param cool_time_duration    during "cool time", prediction is not performed
      */
     PoseEstimator(
-        boost::shared_ptr<pcl::Registration<PointT, PointT>>& registration,
+        std::shared_ptr<pcl::Registration<PointT, PointT>>& registration,
         const Eigen::Vector3f& pos,
         const Eigen::Quaternionf& quat,
         double cool_time_duration = 1.0
@@ -82,9 +81,9 @@ public:
     Eigen::Quaternionf odom_quat() const;
     Eigen::Matrix4f odom_matrix() const;
 
-    const boost::optional<Eigen::Matrix4f>& wo_prediction_error() const;
-    const boost::optional<Eigen::Matrix4f>& imu_prediction_error() const;
-    const boost::optional<Eigen::Matrix4f>& odom_prediction_error() const;
+    const std::optional<Eigen::Matrix4f>& wo_prediction_error() const;
+    const std::optional<Eigen::Matrix4f>& imu_prediction_error() const;
+    const std::optional<Eigen::Matrix4f>& odom_prediction_error() const;
 
 private:
     rclcpp::Time init_stamp_;             // when the estimator was initialized
@@ -92,7 +91,7 @@ private:
     rclcpp::Time last_correct_stamp_;      // when the estimator performed the correct step
     double cool_time_duration_;
 
-    boost::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
+    std::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
 
     std::unique_ptr<PoseSystem> pose_system_model_;
     std::unique_ptr<OdomSystem> odom_system_model_;
@@ -103,9 +102,9 @@ private:
     std::unique_ptr<filter::UnscentedKalmanFilterX<float>> odom_ukf_;
 
     Eigen::Matrix4f last_observation_;
-    boost::optional<Eigen::Matrix4f> wo_pred_error_;
-    boost::optional<Eigen::Matrix4f> imu_pred_error_;
-    boost::optional<Eigen::Matrix4f> odom_pred_error_;
+    std::optional<Eigen::Matrix4f> wo_pred_error_;
+    std::optional<Eigen::Matrix4f> imu_pred_error_;
+    std::optional<Eigen::Matrix4f> odom_pred_error_;
 };
 
-} // namespace simple_3d_localization
+} // namespace s3l::hdl_localization

@@ -1,9 +1,10 @@
 #pragma once
 
-#include <simple_3d_localization/ukf.hpp>
-#include <simple_3d_localization/system_model.hpp>
+#include <simple_3d_localization/hdl_localization/ukf.hpp>
+#include <simple_3d_localization/hdl_localization/system_model.hpp>
 
-namespace s3l {
+namespace s3l::hdl_localization 
+{
 
 /**
  * @brief This class models the sensor pose estimation based on robot odometry
@@ -44,4 +45,4 @@ public:
 };
 
 
-} // namespace s3l
+} // namespace s3l::hdl_localization

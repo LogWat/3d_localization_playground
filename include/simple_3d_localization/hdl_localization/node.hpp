@@ -1,7 +1,6 @@
 #include <mutex>
 #include <memory>
 #include <iostream>
-#include <boost/make_shared.hpp>
 
 #include <rclcpp/rclcpp.hpp>
 #include <std_srvs/srv/set_bool.hpp>
@@ -27,22 +26,23 @@
 #include <small_gicp/pcl/pcl_point_traits.hpp>
 #include <small_gicp/util/downsampling_omp.hpp>
 
-#include <simple_3d_localization/pose_estimator.hpp>
-#include <simple_3d_localization/delta_estimater.hpp>
+#include <simple_3d_localization/hdl_localization/pose_estimator.hpp>
+#include <simple_3d_localization/hdl_localization/delta_estimator.hpp>
 
 #include <simple_3d_localization/msg/scan_matching_status.hpp>
 #include <simple_3d_localization/srv/set_global_map.hpp>
 #include <simple_3d_localization/srv/query_global_localization.hpp>
 
-namespace s3l {
+namespace s3l::hdl_localization 
+{
 
-class HdlLocalizationComponent : public rclcpp::Node {
+class LocalizationNode : public rclcpp::Node {
 
 public:
     using PointT = pcl::PointXYZI;
     using PointCloudT = pcl::PointCloud<PointT>;
 
-    HdlLocalizationComponent(const rclcpp::NodeOptions & options)
+    LocalizationNode(const rclcpp::NodeOptions & options)
     : rclcpp::Node("s3l_hdl_localization", options), tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
         robot_odom_frame_id_ = this->declare_parameter<std::string>("robot_odom_frame_id", "odom");
         odom_child_frame_id_ = this->declare_parameter<std::string>("odom_child_frame_id", "base_link");
@@ -75,16 +75,16 @@ public:
 
         imu_sub_ = this->create_subscription<sensor_msgs::msg::Imu>(
             "imu/data", rclcpp::SensorDataQoS(),
-            std::bind(&HdlLocalizationComponent::imuCallback, this, std::placeholders::_1));
+            std::bind(&LocalizationNode::imuCallback, this, std::placeholders::_1));
         points_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             "points_raw", rclcpp::SensorDataQoS(),
-            std::bind(&HdlLocalizationComponent::pointsCallback, this, std::placeholders::_1));
+            std::bind(&LocalizationNode::pointsCallback, this, std::placeholders::_1));
         globalmap_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             "global_map", rclcpp::SensorDataQoS(),
-            std::bind(&HdlLocalizationComponent::globalMapCallback, this, std::placeholders::_1));
+            std::bind(&LocalizationNode::globalMapCallback, this, std::placeholders::_1));
         initialpose_sub_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
             "initialpose", rclcpp::QoS(1),
-            std::bind(&HdlLocalizationComponent::initialPoseCallback, this, std::placeholders::_1));
+            std::bind(&LocalizationNode::initialPoseCallback, this, std::placeholders::_1));
             
         aligned_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
             "aligned_points", rclcpp::SensorDataQoS());
@@ -95,7 +95,7 @@ public:
 
         // service
         relocalize_srv_ = this->create_service<std_srvs::srv::Empty>(
-            "relocalize", std::bind(&HdlLocalizationComponent::relocalize, this, std::placeholders::_1, std::placeholders::_2));
+            "relocalize", std::bind(&LocalizationNode::relocalize, this, std::placeholders::_1, std::placeholders::_2));
         set_globalmap_client_ = this->create_client<simple_3d_localization::srv::SetGlobalMap>("set_global_map");
         query_global_localization_client_ = this->create_client<simple_3d_localization::srv::QueryGlobalLocalization>("query_global_localization");
 
@@ -111,7 +111,7 @@ public:
 
         // global localization setup
         relocalizing_ = false;
-        delta_estimater_.reset(new DeltaEstimater(registration_));
+        delta_estimater_.reset(new DeltaEstimator(registration_));
 
         // initialize pose estimator
         specity_init_pose_ = this->declare_parameter<bool>("specify_init_pose", false);
@@ -125,13 +125,13 @@ public:
             }
             Eigen::Vector3f pos(init_pose[0], init_pose[1], init_pose[2]);
             Eigen::Quaternionf quat(init_quat[0], init_quat[1], init_quat[2], init_quat[3]);
-            pose_estimator_ = std::make_unique<s3l::PoseEstimator>(
+            pose_estimator_ = std::make_unique<PoseEstimator>(
                 registration_, pos, quat, cool_time_duration_
             );
         }
     }
 
-    HdlLocalizationComponent(const rclcpp::NodeOptions & options, const std::string & node_name);
+    LocalizationNode(const rclcpp::NodeOptions & options, const std::string & node_name);
 
 
 private:
@@ -157,10 +157,10 @@ private:
 
 
 
-    boost::shared_ptr<pcl::Registration<PointT, PointT>> createRegistration() const {
+    std::shared_ptr<pcl::Registration<PointT, PointT>> createRegistration() const {
         if (reg_method_ == "ndt_omp") {
             RCLCPP_INFO(this->get_logger(), "NDT_OMP is selected");
-            boost::shared_ptr<pclomp::NormalDistributionsTransform<PointT, PointT>> ndt_omp(new pclomp::NormalDistributionsTransform<PointT, PointT>());
+            std::shared_ptr<pclomp::NormalDistributionsTransform<PointT, PointT>> ndt_omp(new pclomp::NormalDistributionsTransform<PointT, PointT>());
             
             ndt_omp->setTransformationEpsilon(0.01);
             ndt_omp->setResolution(ndt_resolution_);
@@ -178,7 +178,7 @@ private:
             return ndt_omp;
         } else if (reg_method_ == "ndt_cuda") {
             RCLCPP_INFO(this->get_logger(), "NDT_CUDA is selected");
-            boost::shared_ptr<fast_gicp::NDTCuda<PointT, PointT>> ndt(new fast_gicp::NDTCuda<PointT, PointT>());
+            std::shared_ptr<fast_gicp::NDTCuda<PointT, PointT>> ndt(new fast_gicp::NDTCuda<PointT, PointT>());
             ndt->setResolution(ndt_resolution_);
             if (ndt_neighbor_search_method_ == "D2D") {
                 ndt->setDistanceMode(fast_gicp::NDTDistanceMode::D2D);
@@ -200,7 +200,7 @@ private:
             }
             return ndt;
         } else if (reg_method_ == "gicp" || reg_method_ == "vgicp") {
-            boost::shared_ptr<small_gicp::RegistrationPCL<PointT, PointT>> gicp(new small_gicp::RegistrationPCL<PointT, PointT>());
+            std::shared_ptr<small_gicp::RegistrationPCL<PointT, PointT>> gicp(new small_gicp::RegistrationPCL<PointT, PointT>());
             gicp->setNumThreads(num_threads_);
             gicp->setMaxCorrespondenceDistance(gicp_max_correspondence_distance_);
             gicp->setCorrespondenceRandomness(gicp_correspondence_randomness_);
@@ -243,16 +243,16 @@ private:
             tf_broadcaster_->sendTransform(odom_trans);
         }
 
-        nav_msgs::msg::Odometry odom_msg;
-        odom_msg.header.stamp = stamp;
-        odom_msg.header.frame_id = "map";
-        odom_msg.child_frame_id = odom_child_frame_id_;
-        odom_msg.pose.pose = tf2::toMsg(Eigen::Isometry3d(pose.cast<double>()));
-        odom_msg.twist.twist.linear.x = 0.0;
-        odom_msg.twist.twist.linear.y = 0.0;
-        odom_msg.twist.twist.linear.z = 0.0;
+        nav_msgs::msg::Odometry::UniquePtr odom_msg(new nav_msgs::msg::Odometry);
+        odom_msg->header.stamp = stamp;
+        odom_msg->header.frame_id = "map";
+        odom_msg->child_frame_id = odom_child_frame_id_;
+        odom_msg->pose.pose = tf2::toMsg(Eigen::Isometry3d(pose.cast<double>()));
+        odom_msg->twist.twist.linear.x = 0.0;
+        odom_msg->twist.twist.linear.y = 0.0;
+        odom_msg->twist.twist.linear.z = 0.0;
 
-        pose_pub_->publish(odom_msg);
+        pose_pub_->publish(std::move(odom_msg));
     }
 
     void publishScanMatchingStatus(const std_msgs::msg::Header& header, PointCloudT::ConstPtr aligned) {
@@ -289,17 +289,17 @@ private:
         if (pose_estimator_->wo_prediction_error()) {
             status.prediction_labels.push_back(std_msgs::msg::String{});
             status.prediction_labels.back().data = "without prediction error";
-            status.prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->wo_prediction_error().get().cast<double>())).transform);
+            status.prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->wo_prediction_error().value().cast<double>())).transform);
         }
         if (pose_estimator_->imu_prediction_error()) {
             status.prediction_labels.push_back(std_msgs::msg::String{});
             status.prediction_labels.back().data = use_imu_ ? "imu" : "motion model";
-            status.prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->imu_prediction_error().get().cast<double>())).transform);
+            status.prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->imu_prediction_error().value().cast<double>())).transform);
         }
         if (pose_estimator_->odom_prediction_error()) {
             status.prediction_labels.push_back(std_msgs::msg::String{});
             status.prediction_labels.back().data = "odometry";
-            status.prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->odom_prediction_error().get().cast<double>())).transform);
+            status.prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->odom_prediction_error().value().cast<double>())).transform);
         }
 
         status_pub_->publish(status);
@@ -411,7 +411,7 @@ private:
         std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
         const auto& p = msg->pose.pose.position;
         const auto& q = msg->pose.pose.orientation;
-        pose_estimator_.reset(new s3l::PoseEstimator(
+        pose_estimator_.reset(new PoseEstimator(
             registration_,
             Eigen::Vector3f(p.x, p.y, p.z),
             Eigen::Quaternionf(q.w, q.x, q.y, q.z),
@@ -487,24 +487,21 @@ private:
     // globalmap and registration method
     pcl::PointCloud<PointT>::Ptr globalmap_;
     pcl::Filter<PointT>::Ptr downsampler_;
-    boost::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
+    std::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
     double downsample_leaf_size_;
 
     // pose estimator
     std::mutex pose_estimator_mutex_;
-    std::unique_ptr<s3l::PoseEstimator> pose_estimator_;
+    std::unique_ptr<PoseEstimator> pose_estimator_;
 
     // global localization
     bool use_globlal_localization_;
     std::atomic_bool relocalizing_;
-    std::unique_ptr<s3l::DeltaEstimater> delta_estimater_;
+    std::unique_ptr<DeltaEstimator> delta_estimater_;
 
     pcl::PointCloud<PointT>::ConstPtr last_scan_;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr relocalize_srv_;
     rclcpp::Client<simple_3d_localization::srv::SetGlobalMap>::SharedPtr set_globalmap_client_;
     rclcpp::Client<simple_3d_localization::srv::QueryGlobalLocalization>::SharedPtr query_global_localization_client_;
 };
-} // namespace simple_3d_localization
-
-#include "rclcpp_components/register_node_macro.hpp"
-RCLCPP_COMPONENTS_REGISTER_NODE(s3l::HdlLocalizationComponent)
+} // namespace s3l::hdl_localization

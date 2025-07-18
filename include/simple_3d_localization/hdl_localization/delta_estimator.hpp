@@ -5,14 +5,15 @@
 #include <pcl/point_cloud.h>
 #include <pcl/registration/registration.h>
 
-namespace s3l {
+namespace s3l::hdl_localization
+{
 
-class DeltaEstimater {
+class DeltaEstimator {
 public:
     using PointT = pcl::PointXYZI;
     
-    DeltaEstimater(boost::shared_ptr<pcl::Registration<PointT, PointT>> reg): delta_(Eigen::Isometry3f::Identity()), reg_(reg) {}
-    ~DeltaEstimater() {}
+    explicit DeltaEstimator(std::shared_ptr<pcl::Registration<PointT, PointT>> reg): delta_(Eigen::Isometry3f::Identity()), reg_(reg) {}
+    ~DeltaEstimator() {}
 
     void reset() {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -47,8 +48,8 @@ public:
 private:
     mutable std::mutex mutex_;
     Eigen::Isometry3f delta_;
-    boost::shared_ptr<pcl::Registration<PointT, PointT>> reg_;
+    std::shared_ptr<pcl::Registration<PointT, PointT>> reg_;
     pcl::PointCloud<PointT>::ConstPtr last_frame_;
 };
 
-} // namespace s3l
+} // namespace s3l::hdl_localization
