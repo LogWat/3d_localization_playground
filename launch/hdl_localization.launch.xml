@@ -52,7 +52,6 @@
   <set_parameter name="use_sim_time" value="$(var use_sim_time)"/>
 
   <group>
-    <!-- コンテナの起動 -->
     <node_container
       pkg="rclcpp_components"
       exec="component_container_mt"
