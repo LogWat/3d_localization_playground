@@ -256,10 +256,10 @@ private:
     }
 
     void publishScanMatchingStatus(const std_msgs::msg::Header& header, PointCloudT::ConstPtr aligned) {
-        simple_3d_localization::msg::ScanMatchingStatus status;
-        status.header = header;
-        status.has_converged = registration_->hasConverged();
-        status.matching_error = 0.0;
+        simple_3d_localization::msg::ScanMatchingStatus::UniquePtr status = std::make_unique<simple_3d_localization::msg::ScanMatchingStatus>();
+        status->header = header;
+        status->has_converged = registration_->hasConverged();
+        status->matching_error = 0.0;
         const double max_correspondence_dist = registration_->getMaxCorrespondenceDistance();
         const double max_valid_point_dist = 25.0; // TODO: parameterize this value
 
@@ -273,36 +273,36 @@ private:
             num_valid_points++;
             registration_->getSearchMethodTarget()->nearestKSearch(pt, 1, k_indices, k_sq_dists);
             if (k_sq_dists[0] < max_correspondence_dist * max_correspondence_dist) {
-                status.matching_error += std::sqrt(k_sq_dists[0]);
+                status->matching_error += std::sqrt(k_sq_dists[0]);
                 num_inliers++;
             }
         }
 
-        status.matching_error /= std::max(1, num_inliers);
-        status.inlier_fraction = static_cast<float>(num_inliers) / std::max(1, num_valid_points);
-        status.relative_pose = tf2::eigenToTransform(Eigen::Isometry3d(registration_->getFinalTransformation().cast<double>())).transform;
+        status->matching_error /= std::max(1, num_inliers);
+        status->inlier_fraction = static_cast<float>(num_inliers) / std::max(1, num_valid_points);
+        status->relative_pose = tf2::eigenToTransform(Eigen::Isometry3d(registration_->getFinalTransformation().cast<double>())).transform;
 
-        status.prediction_labels.reserve(2);
-        status.prediction_errors.reserve(2);
+        status->prediction_labels.reserve(2);
+        status->prediction_errors.reserve(2);
         std::vector<double> errors(6, 0.0);
 
         if (pose_estimator_->wo_prediction_error()) {
-            status.prediction_labels.push_back(std_msgs::msg::String{});
-            status.prediction_labels.back().data = "without prediction error";
-            status.prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->wo_prediction_error().value().cast<double>())).transform);
+            status->prediction_labels.push_back(std_msgs::msg::String{});
+            status->prediction_labels.back().data = "without prediction error";
+            status->prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->wo_prediction_error().value().cast<double>())).transform);
         }
         if (pose_estimator_->imu_prediction_error()) {
-            status.prediction_labels.push_back(std_msgs::msg::String{});
-            status.prediction_labels.back().data = use_imu_ ? "imu" : "motion model";
-            status.prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->imu_prediction_error().value().cast<double>())).transform);
+            status->prediction_labels.push_back(std_msgs::msg::String{});
+            status->prediction_labels.back().data = use_imu_ ? "imu" : "motion model";
+            status->prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->imu_prediction_error().value().cast<double>())).transform);
         }
         if (pose_estimator_->odom_prediction_error()) {
-            status.prediction_labels.push_back(std_msgs::msg::String{});
-            status.prediction_labels.back().data = "odometry";
-            status.prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->odom_prediction_error().value().cast<double>())).transform);
+            status->prediction_labels.push_back(std_msgs::msg::String{});
+            status->prediction_labels.back().data = "odometry";
+            status->prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->odom_prediction_error().value().cast<double>())).transform);
         }
 
-        status_pub_->publish(status);
+        status_pub_->publish(std::move(status));
     }
 
     // callbacks -------------------------------------------------------------------------------------
@@ -393,11 +393,11 @@ private:
         auto aligned = pose_estimator_->correct(stamp, downsampled_cloud);
 
         if (aligned_pub_->get_subscription_count() > 0) {
-            sensor_msgs::msg::PointCloud2 aligned_msg;
-            pcl::toROSMsg(*aligned, aligned_msg);
-            aligned_msg.header.frame_id = "map";
-            aligned_msg.header.stamp = stamp;
-            aligned_pub_->publish(aligned_msg);
+            sensor_msgs::msg::PointCloud2::UniquePtr aligned_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
+            pcl::toROSMsg(*aligned, *aligned_msg);
+            aligned_msg->header.frame_id = "map";
+            aligned_msg->header.stamp = stamp;
+            aligned_pub_->publish(std::move(aligned_msg));
         }
         if (status_pub_->get_subscription_count() > 0) {
             publishScanMatchingStatus(msg->header, aligned);
