@@ -23,7 +23,7 @@ namespace s3l::model {
  * @note measurement = [x, y, z, qw, qx, qy, qz]
  */
 class EKFPoseSystemModel {
-    using EigenT = double;
+    using EigenT = float;
     using VectorXt = Eigen::Matrix<EigenT, Eigen::Dynamic, 1>;
     using MatrixXt = Eigen::Matrix<EigenT, Eigen::Dynamic, Eigen::Dynamic>;
     using Vector3t = Eigen::Matrix<EigenT, 3, 1>;
@@ -114,6 +114,8 @@ public:
         return measurement;
     }
 
+private:
+
     /**
      * @brief Jacobian of the measurement function
      * @param state Current state vector
@@ -200,7 +202,7 @@ public:
         return F;
     }
 
-private:
+
     /**
      * @brief Partial derivative of Ra' with respect to quaternion coefficients
      * @param qt Quaternion coefficients
