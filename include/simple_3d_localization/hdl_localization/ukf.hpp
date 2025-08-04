@@ -18,8 +18,8 @@ namespace filter
 
 template <typename T>
 class UnscentedKalmanFilterX {
-    typedef Eigen::Matrix<T, Eigen::Dynamic, 1> VectorXt;
-    typedef Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic> MatrixXt;
+    using VectorXt = Eigen::Matrix<T, Eigen::Dynamic, 1>;
+    using MatrixXt = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
 public:
     UnscentedKalmanFilterX(
         const SystemModel& model,
