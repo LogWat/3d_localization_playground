@@ -41,7 +41,7 @@
   <arg name="use_intra_process_comms" default="false"/>
 
   <!-- remap args -->
-  <arg name="imu_topic" default="imu/data"/>
+  <arg name="imu_topic" default="/livox/imu"/>
   <arg name="pointcloud_topic" default="velodyne_points"/>
   <arg name="global_map_topic" default="globalmap"/>
   <arg name="initialpose_topic" default="initialpose"/>

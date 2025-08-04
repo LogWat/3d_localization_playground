@@ -43,6 +43,7 @@ find_package(PCL 1.12 REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread date_time)
 find_package(small_gicp REQUIRED)
+find_package(Sophus REQUIRED)
 find_package(ndt_omp REQUIRED)
 find_package(fast_gicp REQUIRED)
 
@@ -103,6 +104,7 @@ if(hdl_src_count GREATER 0)
   target_link_libraries(hdl_localization_node
     ${PCL_LIBRARIES}
     Eigen3::Eigen
+    Sophus::Sophus
     ${small_gicp_LIBRARIES}
     ${ndt_omp_LIBRARIES}
     ${fast_gicp_LIBRARIES})

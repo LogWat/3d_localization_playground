@@ -26,6 +26,7 @@
   <depend>ndt_omp</depend>
   <depend>small_gicp</depend>
   <depend>fast_gicp</depend>
+  <depend>sophus</depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
