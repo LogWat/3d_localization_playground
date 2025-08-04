@@ -70,8 +70,7 @@ file(GLOB_RECURSE globalmap_server_src_files
 file(GLOB_RECURSE hdl_localization_src_files
   LIST_DIRECTORIES false
   RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-  "src/${PROJECT_DIR}/hdl_localization/node.cpp"
-  "src/${PROJECT_DIR}/hdl_localization/pose_estimator.cpp")
+  "src/${PROJECT_DIR}/hdl_localization/node.cpp")
 
 # Globalmap Server
 list(LENGTH globalmap_server_src_files globalmap_src_count)
