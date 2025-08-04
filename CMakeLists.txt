@@ -41,6 +41,7 @@ endif()
 # External libraries
 find_package(PCL 1.12 REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system thread date_time)
 find_package(small_gicp REQUIRED)
 find_package(ndt_omp REQUIRED)
 find_package(fast_gicp REQUIRED)
