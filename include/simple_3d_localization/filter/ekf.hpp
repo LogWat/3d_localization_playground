@@ -2,18 +2,21 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <simple_3d_localization/model/ekf_system_model.hpp>
 
 namespace s3l::filter {
 
-template <class SystemModel>
-class ExtendedKalmanFilter {
+template <typename T>
+class ExtendedKalmanFilterX {
+    using VectorXt = Eigen::Matrix<T, Eigen::Dynamic, 1>;
+    using MatrixXt = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
 public:
-    explicit ExtendedKalmanFilter(
-        const SystemModel& model,
+    explicit ExtendedKalmanFilterX(
+        model::ekf::EKFSystemModel& model,
         const int state_dim,
-        const Eigen::VectorXf& initial_state,
-        const Eigen::MatrixXf& initial_cov,
-        const Eigen::MatrixXf& process_noise)
+        const VectorXt& initial_state,
+        const MatrixXt& initial_cov,
+        const MatrixXt& process_noise)
         : state_dim_(state_dim), model_(model), X_(initial_state), P_(initial_cov), Q_(process_noise) {}
 
     /**
@@ -22,9 +25,10 @@ public:
      */
     void predict(const double dt) {
         double dt_c = std::max(std::min(dt, 1.0), 1e-6); // Clamp dt to avoid instability
-        Eigen::VectorXf X_pred = model_.f(X_, dt_c);
-        Eigen::MatrixXf F = model_.stateTransitionJacobian(X_, dt_c);
-        Eigen::MatrixXf P_pred = F * P_ * F.transpose() + Q_ * dt_c;
+        model_.setDt(dt_c);
+        VectorXt X_pred = model_.f(X_);
+        MatrixXt F = model_.stateTransitionJacobian(X_);
+        MatrixXt P_pred = F * P_ * F.transpose() + Q_ * dt_c;
         X_ = X_pred;
         P_ = P_pred;
     }
@@ -34,11 +38,12 @@ public:
      * @param dt Time step for prediction
      * @param control Control input vector
      */
-    void predict(const double dt, const Eigen::VectorXf& control) {
+    void predict(const double dt, const VectorXt& control) {
         double dt_c = std::max(std::min(dt, 1.0), 1e-6); // Clamp dt to avoid instability
-        Eigen::VectorXf X_pred = model_.f(X_, control, dt_c);
-        Eigen::MatrixXf F = model_.stateTransitionJacobian(X_, control, dt_c);
-        Eigen::MatrixXf P_pred = F * P_ * F.transpose() + Q_ * dt_c;
+        model_.setDt(dt_c);
+        VectorXt X_pred = model_.f(X_, control);
+        MatrixXt F = model_.stateTransitionJacobian(X_, control);
+        MatrixXt P_pred = F * P_ * F.transpose() + Q_ * dt_c;
         X_ = X_pred;
         P_ = P_pred;
     }
@@ -48,34 +53,34 @@ public:
      * @param measurement The measurement vector
      * @param measurement_noise The measurement noise covariance matrix
      */
-    void correct(const Eigen::VectorXf& measurement, const Eigen::MatrixXf& measurement_noise) {
-        Eigen::VectorXf measurement_pred = model_.h(X_);
-        Eigen::MatrixXf H = model_.measurementJacobian(X_);
-        Eigen::VectorXf y = measurement - measurement_pred;
-        Eigen::MatrixXf S = H * P_ * H.transpose() + measurement_noise;
-        Eigen::MatrixXf K = P_ * H.transpose() * S.inverse(); // Kalman gain
+    void correct(const VectorXt& measurement, const MatrixXt& measurement_noise) {
+        VectorXt measurement_pred = model_.h(X_);
+        MatrixXt H = model_.measurementJacobian(X_);
+        VectorXt y = measurement - measurement_pred;
+        MatrixXt S = H * P_ * H.transpose() + measurement_noise;
+        MatrixXt K = P_ * H.transpose() * S.inverse(); // Kalman gain
         X_ += K * y; // Correct state estimate
         // Josephson correct for covariance
-        Eigen::MatrixXf I = Eigen::MatrixXf::Identity(state_dim_, state_dim_);
+        MatrixXt I = MatrixXt::Identity(state_dim_, state_dim_);
         P_ = (I - K * H) * P_ * (I - K * H).transpose() + K * measurement_noise * K.transpose();
     }
 
     /* Setter */
-    void setProcessNoise(const Eigen::MatrixXf& process_noise) {
+    void setProcessNoise(const MatrixXt& process_noise) {
         Q_ = process_noise;
     }
 
     /* Getter */
-    const Eigen::VectorXf& getState() const {
+    const VectorXt& getState() const {
         return X_;
     }
 
 private:
     const int state_dim_;
-    SystemModel model_; // System model
-    Eigen::VectorXf X_; // State vector
-    Eigen::MatrixXf P_; // State covariance matrix
-    Eigen::MatrixXf Q_; // Process noise covariance
+    model::ekf::EKFSystemModel& model_; // System model
+    VectorXt X_; // State vector
+    MatrixXt P_; // State covariance matrix
+    MatrixXt Q_; // Process noise covariance
 };
 
 } // namespace s3l::filter

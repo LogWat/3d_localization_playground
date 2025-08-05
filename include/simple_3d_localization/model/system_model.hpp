@@ -28,7 +28,6 @@ public:
     void setDt(double dt) {
         dt_ = dt;
     }
-
 protected:
     double dt_ = 0.1; // time step in seconds
 };
