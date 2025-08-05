@@ -6,7 +6,7 @@
 
 #include <Eigen/Dense>
 
-namespace s3l::hdl_localization
+namespace s3l::model
 {
 
 class SystemModel {
@@ -33,5 +33,5 @@ protected:
     double dt_ = 0.1; // time step in seconds
 };
 
-} // namespace s3l::hdl_localization
+} // namespace s3l::model
 

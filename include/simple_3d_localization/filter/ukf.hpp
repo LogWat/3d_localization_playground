@@ -9,20 +9,19 @@
 
 #include <random>
 #include <Eigen/Dense>
-#include <simple_3d_localization/hdl_localization/system_model.hpp>
+#include <simple_3d_localization/model/system_model.hpp>
 
-namespace s3l::hdl_localization
-{
-namespace filter
+namespace s3l::filter
 {
 
 template <typename T>
 class UnscentedKalmanFilterX {
     using VectorXt = Eigen::Matrix<T, Eigen::Dynamic, 1>;
     using MatrixXt = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+
 public:
     UnscentedKalmanFilterX(
-        const SystemModel& model,
+        const model::SystemModel& model,
         int state_dim,
         int input_dim,
         int measurement_dim,
@@ -182,7 +181,7 @@ public:
     const VectorXt& getMean() const { return mean_; }
     const MatrixXt& getCov() const { return cov_; }
     const MatrixXt& getSigmaPoints() const { return sigma_points_; }
-    const SystemModel& getSystemModel() { return system_model_; }
+    const model::SystemModel& getSystemModel() { return system_model_; }
     const MatrixXt& getProcessNoiseCov() const { return process_noise_; }
     const MatrixXt& getMeasurementNoiseCov() const { return measurement_noise_; }
     const MatrixXt& getKalmanGain() const { return kalman_gain_; }
@@ -244,7 +243,7 @@ public:
     VectorXt mean_;
     MatrixXt cov_;
 
-    const SystemModel& system_model_;
+    const model::SystemModel& system_model_;
     MatrixXt process_noise_;
     MatrixXt measurement_noise_;
 
@@ -263,5 +262,5 @@ public:
     std::normal_distribution<T> normal_dist;    // Normal distribution for generating random numbers
 };
 
-} // namespace filter
-} // namespace s3l::hdl_localization
+} // namespace s3l::filter
+

@@ -8,8 +8,10 @@
 #include <pcl/registration/registration.h>
 
 #include <simple_3d_localization/filter/ukf.hpp>
-#include <simple_3d_localization/hdl_localization/pose_system.hpp>
-#include <simple_3d_localization/hdl_localization/odom_system.hpp>
+// #include <simple_3d_localization/filter/ekf.hpp>
+#include <simple_3d_localization/model/ukf_pose.hpp>
+#include <simple_3d_localization/model/odom_system.hpp>
+// #include <simple_3d_localization/model/ekf_pose.hpp>
 
 namespace s3l
 {
@@ -21,14 +23,6 @@ enum FilterType {
 
 namespace hdl_localization 
 {
-
-namespace filter {
-template <typename T> class UnscentedKalmanFilterX;
-} // namespace filter
-
-class PoseSystem;
-class OdomSystem;
-
 
 /**
  * @brief scan matching-based pose estimator
@@ -60,13 +54,14 @@ public:
         last_observation_.block<3, 1>(0, 3) = pos;
 
         // pose_system の stateベクトルの次元
-        // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) = 16
-        process_noise_ = Eigen::MatrixXf::Identity(16, 16);
+        // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) + gravity(3) = 19
+        process_noise_ = Eigen::MatrixXf::Identity(19, 19);
         process_noise_.middleRows(0, 3) *= 1.0;
         process_noise_.middleRows(3, 3) *= 1.0;
         process_noise_.middleRows(6, 4) *= 0.5;
         process_noise_.middleRows(10, 3) *= 1e-3;
         process_noise_.middleRows(13, 3) *= 1e-5;
+        process_noise_.middleRows(16, 3) *= 1e-5;
 
         // 位置(3) + 姿勢(4) = 7
         Eigen::MatrixXf measurement_noise = Eigen::MatrixXf::Identity(7, 7);
@@ -74,19 +69,20 @@ public:
         measurement_noise.middleRows(3, 4) *= 0.001;
 
         // 初期状態
-        Eigen::VectorXf mean(16);
+        Eigen::VectorXf mean(19);
         mean.middleRows(0, 3) = pos;
         mean.middleRows(3, 3).setZero();
         mean.middleRows(6, 4) = Eigen::Vector4f(quat.w(), quat.x(), quat.y(), quat.z()).normalized();
         mean.middleRows(10, 3).setZero();
         mean.middleRows(13, 3).setZero();
+        mean.middleRows(16, 3) = Eigen::Vector3f(0.0f, 0.0f, -9.81f); // 重力ベクトル
 
-        Eigen::MatrixXf cov = Eigen::MatrixXf::Identity(16, 16) * 0.01;
+        Eigen::MatrixXf cov = Eigen::MatrixXf::Identity(19, 19) * 0.01;
 
-        pose_system_model_ = std::make_unique<PoseSystem>();
+        pose_system_model_ = std::make_unique<model::UKFPoseSystemModel>();
         ukf_.reset(new filter::UnscentedKalmanFilterX<float>(
             *pose_system_model_,
-            16,
+            19,  // state dimension
             6,
             7,
             process_noise_,
@@ -94,6 +90,27 @@ public:
             mean,
             cov
         ));
+
+        // ------------------------------------
+        // Eigen::VectorXf ekf_mean(19);
+        // ekf_mean.middleRows(0, 3) = pos; // position
+        // ekf_mean.middleRows(3, 3).setZero(); // velocity
+        // ekf_mean.middleRows(6, 4) = Eigen::Vector4f(quat.w(), quat.x(), quat.y(), quat.z()).normalized(); // quaternion
+        // ekf_mean.middleRows(10, 3).setZero(); // acc bias
+        // ekf_mean.middleRows(13, 3).setZero(); // gyro bias
+        // ekf_mean.middleRows(16, 3).setZero(); // gravity vector
+        
+        // Eigen::MatrixXf ekf_cov = Eigen::MatrixXf::Identity(19, 19) * 0.01;
+
+
+        // ekf_pose_model_ = std::make_unique<model::EKFPoseSystemModel<float>>();
+        // ekf_pose_filter_ = std::make_unique<filter::ExtendedKalmanFilterX<float>>(
+        //     *ekf_pose_model_,
+        //     19,  // state dimension
+        //     mean,
+        //     cov
+        // );
+
     }
 
     ~PoseEstimator() {}
@@ -159,7 +176,7 @@ public:
             odom_mean.block<4, 1>(3, 0) = Eigen::Vector4f(ukf_->mean_[6], ukf_->mean_[7], ukf_->mean_[8], ukf_->mean_[9]).normalized();
             Eigen::MatrixXf odom_cov = Eigen::MatrixXf::Identity(7, 7) * 1e-2;
 
-            odom_system_model_ = std::make_unique<OdomSystem>();
+            odom_system_model_ = std::make_unique<model::OdomSystemModel>();
             odom_ukf_.reset(new filter::UnscentedKalmanFilterX<float>(
                 *odom_system_model_,
                 7,  // state dimension
@@ -319,9 +336,11 @@ private:
 
     std::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
 
-    std::unique_ptr<PoseSystem> pose_system_model_;
-    std::unique_ptr<OdomSystem> odom_system_model_;
+    std::unique_ptr<model::UKFPoseSystemModel> pose_system_model_;
+    std::unique_ptr<model::OdomSystemModel> odom_system_model_;
 
+    // std::unique_ptr<model::EKFPoseSystemModel<float>> ekf_pose_model_;
+    // std::unique_ptr<filter::ExtendedKalmanFilterX<float>> ekf_pose_filter_;
 
     Eigen::MatrixXf process_noise_;
     std::unique_ptr<filter::UnscentedKalmanFilterX<float>> ukf_;
