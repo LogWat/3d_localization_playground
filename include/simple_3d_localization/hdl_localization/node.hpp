@@ -90,6 +90,8 @@ public:
             "aligned_points", rclcpp::SensorDataQoS());
         pose_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(
             "odom", rclcpp::QoS(5));
+        ekf_pose_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(
+            "ekf_pose", rclcpp::QoS(5));
         status_pub_ = this->create_publisher<simple_3d_localization::msg::ScanMatchingStatus>(
             "scan_matching_status", rclcpp::SensorDataQoS());
 
@@ -157,7 +159,7 @@ private:
 
 
 
-    std::shared_ptr<pcl::Registration<PointT, PointT>> createRegistration() const {
+    std::shared_ptr<pcl::Registration<PointT, PointT>> createRegistration() {
         if (reg_method_ == "ndt_omp") {
             RCLCPP_INFO(this->get_logger(), "NDT_OMP is selected");
             std::shared_ptr<pclomp::NormalDistributionsTransform<PointT, PointT>> ndt_omp(new pclomp::NormalDistributionsTransform<PointT, PointT>());
@@ -215,7 +217,7 @@ private:
     }
 
     
-    void publishOdometry(const rclcpp::Time& stamp, const Eigen::Matrix4f& pose) {
+    void publishOdometry(const rclcpp::Time& stamp, const Eigen::Matrix4f& pose, const std::string& filter_type) {
         geometry_msgs::msg::TransformStamped map_wrt_frame = tf2::eigenToTransform(Eigen::Isometry3d(pose.inverse().cast<double>()));
         map_wrt_frame.header.stamp = stamp;
         map_wrt_frame.header.frame_id = robot_odom_frame_id_;
@@ -252,7 +254,8 @@ private:
         odom_msg->twist.twist.linear.y = 0.0;
         odom_msg->twist.twist.linear.z = 0.0;
 
-        pose_pub_->publish(std::move(odom_msg));
+        if (filter_type == "ekf") ekf_pose_pub_->publish(std::move(odom_msg));
+        else pose_pub_->publish(std::move(odom_msg));
     }
 
     void publishScanMatchingStatus(const std_msgs::msg::Header& header, PointCloudT::ConstPtr aligned) {
@@ -403,7 +406,8 @@ private:
             publishScanMatchingStatus(msg->header, aligned);
         }
 
-        publishOdometry(msg->header.stamp, pose_estimator_->matrix());
+        publishOdometry(msg->header.stamp, pose_estimator_->matrix(), "none");
+        publishOdometry(msg->header.stamp, pose_estimator_->ekf_matrix(), "ekf");
     }
 
     void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg) {
@@ -473,6 +477,7 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initialpose_sub_;
 
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pose_pub_;
+    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr ekf_pose_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr aligned_pub_;
     rclcpp::Publisher<simple_3d_localization::msg::ScanMatchingStatus>::SharedPtr status_pub_;
 

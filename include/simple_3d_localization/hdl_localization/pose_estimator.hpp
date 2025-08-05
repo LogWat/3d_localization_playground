@@ -8,10 +8,10 @@
 #include <pcl/registration/registration.h>
 
 #include <simple_3d_localization/filter/ukf.hpp>
-// #include <simple_3d_localization/filter/ekf.hpp>
+#include <simple_3d_localization/filter/ekf.hpp>
 #include <simple_3d_localization/model/ukf_pose.hpp>
 #include <simple_3d_localization/model/odom_system.hpp>
-// #include <simple_3d_localization/model/ekf_pose.hpp>
+#include <simple_3d_localization/model/ekf_pose.hpp>
 
 namespace s3l
 {
@@ -56,17 +56,17 @@ public:
         // pose_system の stateベクトルの次元
         // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) + gravity(3) = 19
         process_noise_ = Eigen::MatrixXf::Identity(19, 19);
-        process_noise_.middleRows(0, 3) *= 1.0;
-        process_noise_.middleRows(3, 3) *= 1.0;
-        process_noise_.middleRows(6, 4) *= 0.5;
+        process_noise_.middleRows(0, 3) *= std::pow(0.1, 2); // 0.1 m
+        process_noise_.middleRows(3, 3) *= std::pow(0.1, 2); // 0.1 m/s^2
+        process_noise_.middleRows(6, 4) *= std::pow(1.0 * M_PI / 180.0, 2); // 1 degree in radians squared
         process_noise_.middleRows(10, 3) *= 1e-3;
         process_noise_.middleRows(13, 3) *= 1e-5;
         process_noise_.middleRows(16, 3) *= 1e-5;
 
         // 位置(3) + 姿勢(4) = 7
-        Eigen::MatrixXf measurement_noise = Eigen::MatrixXf::Identity(7, 7);
-        measurement_noise.middleRows(0, 3) *= 0.01;
-        measurement_noise.middleRows(3, 4) *= 0.001;
+        measurement_noise_ = Eigen::MatrixXf::Identity(7, 7);
+        measurement_noise_.middleRows(0, 3) *= 0.01;
+        measurement_noise_.middleRows(3, 4) *= 0.001;
 
         // 初期状態
         Eigen::VectorXf mean(19);
@@ -86,30 +86,39 @@ public:
             6,
             7,
             process_noise_,
-            measurement_noise,
+            measurement_noise_,
             mean,
             cov
         ));
 
         // ------------------------------------
-        // Eigen::VectorXf ekf_mean(19);
-        // ekf_mean.middleRows(0, 3) = pos; // position
-        // ekf_mean.middleRows(3, 3).setZero(); // velocity
-        // ekf_mean.middleRows(6, 4) = Eigen::Vector4f(quat.w(), quat.x(), quat.y(), quat.z()).normalized(); // quaternion
-        // ekf_mean.middleRows(10, 3).setZero(); // acc bias
-        // ekf_mean.middleRows(13, 3).setZero(); // gyro bias
-        // ekf_mean.middleRows(16, 3).setZero(); // gravity vector
+        Eigen::VectorXf ekf_mean(19);
+        ekf_mean.middleRows(0, 3) = pos; // position
+        ekf_mean.middleRows(3, 3).setZero(); // velocity
+        ekf_mean.middleRows(6, 4) = Eigen::Vector4f(quat.w(), quat.x(), quat.y(), quat.z()).normalized(); // quaternion
+        ekf_mean.middleRows(10, 3).setZero(); // acc bias
+        ekf_mean.middleRows(13, 3).setZero(); // gyro bias
+        ekf_mean.middleRows(16, 3).setZero(); // gravity vector
+
+        ekf_process_noise_ = Eigen::MatrixXf::Identity(19, 19);
+        ekf_process_noise_.middleRows(0, 3) *= 1.0;
+        ekf_process_noise_.middleRows(3, 3) *= 1.0;
+        ekf_process_noise_.middleRows(6, 4) *= 0.5;
+        ekf_process_noise_.middleRows(10, 3) *= 1e-3;
+        ekf_process_noise_.middleRows(13, 3) *= 1e-5;
+        ekf_process_noise_.middleRows(16, 3) *= 1e-5;
         
-        // Eigen::MatrixXf ekf_cov = Eigen::MatrixXf::Identity(19, 19) * 0.01;
+        Eigen::MatrixXf ekf_cov = Eigen::MatrixXf::Identity(19, 19) * 0.01;
 
 
-        // ekf_pose_model_ = std::make_unique<model::EKFPoseSystemModel<float>>();
-        // ekf_pose_filter_ = std::make_unique<filter::ExtendedKalmanFilterX<float>>(
-        //     *ekf_pose_model_,
-        //     19,  // state dimension
-        //     mean,
-        //     cov
-        // );
+        ekf_pose_model_ = std::make_unique<model::EKFPoseSystemModel>();
+        ekf_pose_filter_ = std::make_unique<filter::ExtendedKalmanFilterX<float>>(
+            *ekf_pose_model_,
+            19,  // state dimension
+            ekf_mean,
+            ekf_cov,
+            ekf_process_noise_
+        );
 
     }
 
@@ -134,6 +143,9 @@ public:
         ukf_->setProcessNoiseCov(process_noise_ * dt);
         pose_system_model_->setDt(dt);
         ukf_->predict();
+
+        ekf_pose_filter_->setProcessNoise(ekf_process_noise_ * dt);
+        ekf_pose_filter_->predict(dt);
     }
 
     /**
@@ -160,6 +172,9 @@ public:
         control.head<3>() = acc; // acceleration
         control.tail<3>() = gyro; // angular velocity
         ukf_->predict(control);
+
+        ekf_pose_filter_->setProcessNoise(ekf_process_noise_ * dt);
+        ekf_pose_filter_->predict(dt, control);
     }
 
     /**
@@ -274,6 +289,7 @@ public:
         wo_pred_error_ = no_guess.inverse() * registration_->getFinalTransformation();
 
         ukf_->correct(observation);
+        ekf_pose_filter_->correct(observation, measurement_noise_);
         imu_pred_error_ = imu_guess.inverse() * registration_->getFinalTransformation();
 
         if (odom_ukf_) {
@@ -283,6 +299,17 @@ public:
             odom_ukf_->correct(observation);
             odom_pred_error_ = odom_guess.inverse() * registration_->getFinalTransformation();
         }
+
+        std::cout << "UKF --------------------------------------------- \n"
+                    << "Position: " << ukf_->mean_.head<3>().transpose() << "\n"
+                    << "Quaternion: " << ukf_->mean_.segment<4>(6).transpose() << "\n"
+                    << "--------------------------------------------------\n";
+                    
+        const auto EKF_mean = ekf_pose_filter_->getState();
+        std::cout << "EKF --------------------------------------------- \n"
+                    << "Position: " << EKF_mean.head<3>().transpose() << "\n"
+                    << "Quaternion: " << EKF_mean.segment<4>(6).transpose() << "\n"
+                    << "--------------------------------------------------\n";
 
         return aligned;
     }
@@ -304,6 +331,13 @@ public:
         Eigen::Matrix4f mat = Eigen::Matrix4f::Identity();
         mat.block<3, 3>(0, 0) = quat().toRotationMatrix();
         mat.block<3, 1>(0, 3) = pos();
+        return mat;
+    }
+    Eigen::Matrix4f ekf_matrix() const {
+        Eigen::Matrix4f mat = Eigen::Matrix4f::Identity();
+        const auto EKF_mean = ekf_pose_filter_->getState();
+        mat.block<3, 3>(0, 0) = Eigen::Quaternionf(EKF_mean[6], EKF_mean[7], EKF_mean[8], EKF_mean[9]).normalized().toRotationMatrix();
+        mat.block<3, 1>(0, 3) = Eigen::Vector3f(EKF_mean[0], EKF_mean[1], EKF_mean[2]);
         return mat;
     }
     Eigen::Vector3f odom_pos() const {
@@ -339,10 +373,12 @@ private:
     std::unique_ptr<model::UKFPoseSystemModel> pose_system_model_;
     std::unique_ptr<model::OdomSystemModel> odom_system_model_;
 
-    // std::unique_ptr<model::EKFPoseSystemModel<float>> ekf_pose_model_;
-    // std::unique_ptr<filter::ExtendedKalmanFilterX<float>> ekf_pose_filter_;
+    std::unique_ptr<model::EKFPoseSystemModel> ekf_pose_model_;
+    std::unique_ptr<filter::ExtendedKalmanFilterX<float>> ekf_pose_filter_;
 
     Eigen::MatrixXf process_noise_;
+    Eigen::MatrixXf ekf_process_noise_;
+    Eigen::MatrixXf measurement_noise_;
     std::unique_ptr<filter::UnscentedKalmanFilterX<float>> ukf_;
     std::unique_ptr<filter::UnscentedKalmanFilterX<float>> odom_ukf_;
 
