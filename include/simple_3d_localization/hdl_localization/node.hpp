@@ -6,6 +6,7 @@
 #include <std_srvs/srv/set_bool.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_ros/transforms.hpp>
+#include <pcl/filters/filter.h>
 
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <tf2_eigen_kdl/tf2_eigen_kdl.hpp>
@@ -60,15 +61,19 @@ public:
         num_threads_ = this->declare_parameter<int>("num_threads", 8);
         cool_time_duration_ = this->declare_parameter<double>("cool_time_duration", 0.5);
 
-        ndt_neightbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
+        ndt_neighbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
         ndt_resolution_ = this->declare_parameter<double>("ndt_resolution", 1.0);
 
-        use_globlal_localization_ = this->declare_parameter<bool>("use_global_localization", false);
-        if (use_globlal_localization_) {
+        use_global_localization_ = this->declare_parameter<bool>("use_global_localization", false);
+        if (use_global_localization_) {
             RCLCPP_INFO(this->get_logger(), "Global localization is enabled.");
-            RCLCPP_INFO(this->get_logger(), "Wait for global lcoalization services");
+            RCLCPP_INFO(this->get_logger(), "Wait for global localization services");
             // TODO 実装
         }
+
+        // registation method (ndt_omp, ndt_cuda, gicp, vgicp) setup
+        std::lock_guard<std::mutex> lock(reg_mutex_);
+        registration_ = createRegistration();
 
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(
             std::shared_ptr<rclcpp::Node>(this, [](auto) {}));
@@ -106,10 +111,6 @@ public:
         std::shared_ptr<pcl::VoxelGrid<PointT>> downsampler(new pcl::VoxelGrid<PointT>());
         downsampler->setLeafSize(downsample_leaf_size_, downsample_leaf_size_, downsample_leaf_size_);
         downsampler_ = downsampler;
-
-        // registation method (ndt_omp, ndt_cuda, gicp, vgicp) setup
-        RCLCPP_INFO(this->get_logger(), "Registration method: %s", reg_method_.c_str());
-        registration_ = createRegistration();
 
         // global localization setup
         relocalizing_ = false;
@@ -169,10 +170,13 @@ private:
             ndt_omp->setNumThreads(num_threads_);
             if (ndt_neighbor_search_method_ == "DIRECT1") {
                 ndt_omp->setNeighborhoodSearchMethod(pclomp::DIRECT1);
+                RCLCPP_INFO(this->get_logger(), "Using DIRECT1 neighborhood search method");
             } else if (ndt_neighbor_search_method_ == "DIRECT7") {
                 ndt_omp->setNeighborhoodSearchMethod(pclomp::DIRECT7);
+                RCLCPP_INFO(this->get_logger(), "Using DIRECT7 neighborhood search method");
             } else if (ndt_neighbor_search_method_ == "KDTREE") {
                 ndt_omp->setNeighborhoodSearchMethod(pclomp::KDTREE);
+                RCLCPP_INFO(this->get_logger(), "Using KDTREE neighborhood search method");
             } else {
                 RCLCPP_ERROR(this->get_logger(), "Unknown NDT neighbor search method: %s", ndt_neighbor_search_method_.c_str());
                 return nullptr;
@@ -195,7 +199,7 @@ private:
             } else if (ndt_neighbor_search_method_ == "DIRECT7") {
                 ndt->setNeighborSearchMethod(fast_gicp::NeighborSearchMethod::DIRECT7);
             } else if (ndt_neighbor_search_method_ == "DIRECT_RADIUS") {
-                ndt->setNeighborSearchMethod(fast_gicp::NeighborSearchMethod::DIRECT_RADIUS, ndt_neightbor_search_radius_);
+                ndt->setNeighborSearchMethod(fast_gicp::NeighborSearchMethod::DIRECT_RADIUS, ndt_neighbor_search_radius_);
             } else {
                 RCLCPP_ERROR(this->get_logger(), "Unknown NDT neighbor search method: %s", ndt_neighbor_search_method_.c_str());
                 return nullptr;
@@ -314,7 +318,7 @@ private:
         imu_buffer_.push_back(msg);
     }
     void pointsCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
-        if(!globalmap_) {
+        if(!globalmap_ || globalmap_->empty()) {
             RCLCPP_WARN(this->get_logger(), "Global map is not set yet. Ignoring point cloud.");
             return;
         }
@@ -425,13 +429,26 @@ private:
 
     void globalMapCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
         RCLCPP_INFO(this->get_logger(), "Global map received!");
+        std::lock_guard<std::mutex> lock(reg_mutex_);
         if (registration_ == nullptr) registration_ = createRegistration();
 
-        globalmap_ = std::make_shared<pcl::PointCloud<PointT>>();
-        pcl::fromROSMsg(*msg, *globalmap_);
+        pcl::PointCloud<PointT>::Ptr map(new pcl::PointCloud<PointT>());
+        pcl::fromROSMsg(*msg, *map);
+        std::vector<int> dummy;
+        pcl::removeNaNFromPointCloud(*map, *map, dummy);
+        map->is_dense = true;
+        map->height = 1;
+        map->width = map->size();
+
+        if (map->empty()) {
+            RCLCPP_ERROR(this->get_logger(), "Received empty/invalid global map. Waiting next...");
+            return;
+        }
+
+        globalmap_ = map;
         registration_->setInputTarget(globalmap_);
 
-        if (use_globlal_localization_) {
+        if (use_global_localization_) {
             RCLCPP_INFO(this->get_logger(), "Global localization is enabled. Waiting for initial pose input.");
             simple_3d_localization::srv::SetGlobalMap::Request req;
             simple_3d_localization::srv::SetGlobalMap::Response res;
@@ -455,7 +472,7 @@ private:
     // variables ------------------------------------------------------------------------------------
     std::string robot_odom_frame_id_, odom_child_frame_id_;
     std::string reg_method_, ndt_neighbor_search_method_;
-    double ndt_neightbor_search_radius_;
+    double ndt_neighbor_search_radius_;
     double ndt_resolution_;
     int gicp_correspondence_randomness_;
     double gicp_max_correspondence_distance_;
@@ -492,6 +509,7 @@ private:
     // globalmap and registration method
     pcl::PointCloud<PointT>::Ptr globalmap_;
     pcl::Filter<PointT>::Ptr downsampler_;
+    std::mutex reg_mutex_;
     std::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
     double downsample_leaf_size_;
 
@@ -500,7 +518,7 @@ private:
     std::unique_ptr<PoseEstimator> pose_estimator_;
 
     // global localization
-    bool use_globlal_localization_;
+    bool use_global_localization_;
     std::atomic_bool relocalizing_;
     std::unique_ptr<DeltaEstimator> delta_estimater_;
 

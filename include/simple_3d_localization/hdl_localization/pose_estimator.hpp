@@ -56,9 +56,9 @@ public:
         // pose_system の stateベクトルの次元
         // 位置(3) + 速度(3) + 姿勢(4) + bias(3) + bias_gyro(3) + gravity(3) = 19
         process_noise_ = Eigen::MatrixXf::Identity(19, 19);
-        process_noise_.middleRows(0, 3) *= std::pow(0.1, 2); // 0.1 m
-        process_noise_.middleRows(3, 3) *= std::pow(0.1, 2); // 0.1 m/s^2
-        process_noise_.middleRows(6, 4) *= std::pow(1.0 * M_PI / 180.0, 2); // 1 degree in radians squared
+        process_noise_.middleRows(0, 3) *= 1.0;
+        process_noise_.middleRows(3, 3) *= 1.0;
+        process_noise_.middleRows(6, 4) *= 0.5;
         process_noise_.middleRows(10, 3) *= 1e-3;
         process_noise_.middleRows(13, 3) *= 1e-5;
         process_noise_.middleRows(16, 3) *= 1e-5;
