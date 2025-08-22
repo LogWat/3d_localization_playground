@@ -3,13 +3,17 @@
 [![License: BSD 2-Clause](https://img.shields.io/badge/License-BSD_2--Clause-orange.svg)](LICENSE)
 [![ROS2 Humble](https://img.shields.io/badge/ROS2-Humble-blue.svg)](https://docs.ros.org/en/humble/)
 
-3D-LiDARとIMUを使用した自己位置推定用パッケージ
+3D-LiDARとIMUを使用した比較検証用に使用できる簡易な3次元位置推定パッケージ
+
+推定器としてEKF(Extended Kalman Filter)とUKF(Unscented Kalman Filter)を実装し、点群レジストレーションにはNDT(ndt_omp), GICP(small_gicp), VGICP(small_gicp)を使用可能
 
 内容物
-- [hdl_localization](github.com/koide3/hdl_localization)をROS2で使用できるようにしたもの ukfベース (要修正)
+- [hdl_localization](github.com/koide3/hdl_localization)をROS2で使用できるようにしたもの + 実験用にカルマンフィルタをUKFとEKFで切替可能にした + 点群レジストレーションで NDT(ndt_omp), GICP(small_gicp), VGICP(small_gicp)を切替可能にした
 - globalmap_server (hdl_localizationにふくまれてたやつ 要修正)
 - グラフ最適化ベース (実装中)
 
+
+UKF, EKFの設計に関するdocは準備中…
 
 ## Installation
 
@@ -26,10 +30,6 @@
 - **ndt_omp**: OpenMP-accelerated NDT
 - **fast_gicp**: CUDA-accelerated GICP
 - **gtsam_points**: Factor graph optimization (for FGraph localization)
-
-## !NOTICE!
-**hdl_localization ROS2 の `registration_method` を `ndt_omp` に設定するとプログラムがクラッシュするバグが存在します**
-- おそらくPCLのバージョン周りが関係してそうですが修正中　原因わかる方がいれば教えてくださいm(_ _)m
 
 ## How to use
 
