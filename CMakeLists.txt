@@ -12,10 +12,15 @@ cmake_policy(SET CMP0074 NEW)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Option
+option(S3L_USE_FAST_GICP "Link fast_gicp" OFF)
+option(S3L_USE_SMALL_GICP "Link small_gicp" OFF)
+option(S3L_DISABLE_EIGEN_ALIGN "Disable Eigen alignment/vectorization" OFF)
+
 # Compiler options
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -march=native")
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
   set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -g")
 
   if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
@@ -96,17 +101,28 @@ if(hdl_src_count GREATER 0)
   target_include_directories(hdl_localization_node PUBLIC
     ${PCL_INCLUDE_DIRS}
     ${Eigen3_INCLUDE_DIRS}
-    ${small_gicp_INCLUDE_DIRS}
+    $<$<BOOL:${S3L_USE_SMALL_GICP}>:${small_gicp_INCLUDE_DIRS}>
     ${ndt_omp_INCLUDE_DIRS}
-    ${fast_gicp_INCLUDE_DIRS})
+    $<$<BOOL:${S3L_USE_FAST_GICP}>:${fast_gicp_INCLUDE_DIRS}>
+    $<$<NOT:$<TARGET_EXISTS:Sophus::Sophus>>:${Sophus_INCLUDE_DIRS}>
+  )
 
   target_link_libraries(hdl_localization_node
     ${PCL_LIBRARIES}
     Eigen3::Eigen
-    Sophus::Sophus
-    ${small_gicp_LIBRARIES}
+    $<$<BOOL:${S3L_USE_SMALL_GICP}>:${small_gicp_LIBRARIES}>
     ${ndt_omp_LIBRARIES}
-    ${fast_gicp_LIBRARIES})
+    $<$<BOOL:${S3L_USE_FAST_GICP}>:${fast_gicp_LIBRARIES}>
+    $<$<TARGET_EXISTS:Sophus::Sophus>:Sophus::Sophus>
+  )
+
+  if(S3L_DISABLE_EIGEN_ALIGN)
+    target_compile_definitions(hdl_localization_node PRIVATE
+      EIGEN_DONT_ALIGN_STATICALLY=1
+      EIGEN_MAX_ALIGN_BYTES=0
+      EIGEN_DONT_VECTORIZE=1
+    )
+  endif()
   
   rclcpp_components_register_nodes(hdl_localization_node
     "${PROJECT_NAMESPACE}::hdl_localization::LocalizationNode"

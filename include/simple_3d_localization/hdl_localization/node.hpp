@@ -6,6 +6,7 @@
 #include <std_srvs/srv/set_bool.hpp>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl_ros/transforms.hpp>
+#include <pcl/filters/filter.h>
 
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <tf2_eigen_kdl/tf2_eigen_kdl.hpp>
@@ -29,6 +30,7 @@
 #include <simple_3d_localization/hdl_localization/pose_estimator.hpp>
 #include <simple_3d_localization/hdl_localization/delta_estimator.hpp>
 
+#include <simple_3d_localization/type.hpp>
 #include <simple_3d_localization/msg/scan_matching_status.hpp>
 #include <simple_3d_localization/srv/set_global_map.hpp>
 #include <simple_3d_localization/srv/query_global_localization.hpp>
@@ -60,15 +62,32 @@ public:
         num_threads_ = this->declare_parameter<int>("num_threads", 8);
         cool_time_duration_ = this->declare_parameter<double>("cool_time_duration", 0.5);
 
-        ndt_neightbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
+        ndt_neighbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
         ndt_resolution_ = this->declare_parameter<double>("ndt_resolution", 1.0);
 
-        use_globlal_localization_ = this->declare_parameter<bool>("use_global_localization", false);
-        if (use_globlal_localization_) {
+        use_global_localization_ = this->declare_parameter<bool>("use_global_localization", false);
+        if (use_global_localization_) {
             RCLCPP_INFO(this->get_logger(), "Global localization is enabled.");
-            RCLCPP_INFO(this->get_logger(), "Wait for global lcoalization services");
+            RCLCPP_INFO(this->get_logger(), "Wait for global localization services");
             // TODO 実装
         }
+
+        // filter type (ukf, ekf)
+        std::string filter_type_str = this->declare_parameter<std::string>("filter_type", "ukf");
+        if (filter_type_str == "ukf") {
+            RCLCPP_INFO(this->get_logger(), "Using Unscented Kalman Filter (UKF) for pose estimation.");
+            filter_type_ = FilterType::UKF;
+        } else if (filter_type_str == "ekf") {
+            RCLCPP_INFO(this->get_logger(), "Using Extended Kalman Filter (EKF) for pose estimation.");
+            filter_type_ = FilterType::EKF;
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Invalid filter type: %s. Using UKF by default.", filter_type_str.c_str());
+            filter_type_ = FilterType::UKF;
+        }
+
+        // registation method (ndt_omp, ndt_cuda, gicp, vgicp) setup
+        std::lock_guard<std::mutex> lock(reg_mutex_);
+        registration_ = createRegistration();
 
         tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(
             std::shared_ptr<rclcpp::Node>(this, [](auto) {}));
@@ -105,17 +124,13 @@ public:
         downsampler->setLeafSize(downsample_leaf_size_, downsample_leaf_size_, downsample_leaf_size_);
         downsampler_ = downsampler;
 
-        // registation method (ndt_omp, ndt_cuda, gicp, vgicp) setup
-        RCLCPP_INFO(this->get_logger(), "Registration method: %s", reg_method_.c_str());
-        registration_ = createRegistration();
-
         // global localization setup
         relocalizing_ = false;
         delta_estimater_.reset(new DeltaEstimator(registration_));
 
         // initialize pose estimator
-        specity_init_pose_ = this->declare_parameter<bool>("specify_init_pose", false);
-        if (specity_init_pose_) {
+        specify_init_pose_ = this->declare_parameter<bool>("specify_init_pose", false);
+        if (specify_init_pose_) {
             RCLCPP_INFO(this->get_logger(), "Specify initial pose is enabled.");
             auto init_pose = this->declare_parameter<std::vector<float>>("init_pose", {0.0f, 0.0f, 0.0f});
             auto init_quat = this->declare_parameter<std::vector<float>>("init_quat", {0.0, 0.0, 0.0, 1.0});
@@ -126,7 +141,7 @@ public:
             Eigen::Vector3f pos(init_pose[0], init_pose[1], init_pose[2]);
             Eigen::Quaternionf quat(init_quat[0], init_quat[1], init_quat[2], init_quat[3]);
             pose_estimator_ = std::make_unique<PoseEstimator>(
-                registration_, pos, quat, cool_time_duration_
+                registration_, pos, quat, filter_type_, cool_time_duration_
             );
         }
     }
@@ -157,7 +172,7 @@ private:
 
 
 
-    std::shared_ptr<pcl::Registration<PointT, PointT>> createRegistration() const {
+    std::shared_ptr<pcl::Registration<PointT, PointT>> createRegistration() {
         if (reg_method_ == "ndt_omp") {
             RCLCPP_INFO(this->get_logger(), "NDT_OMP is selected");
             std::shared_ptr<pclomp::NormalDistributionsTransform<PointT, PointT>> ndt_omp(new pclomp::NormalDistributionsTransform<PointT, PointT>());
@@ -167,10 +182,13 @@ private:
             ndt_omp->setNumThreads(num_threads_);
             if (ndt_neighbor_search_method_ == "DIRECT1") {
                 ndt_omp->setNeighborhoodSearchMethod(pclomp::DIRECT1);
+                RCLCPP_INFO(this->get_logger(), "Using DIRECT1 neighborhood search method");
             } else if (ndt_neighbor_search_method_ == "DIRECT7") {
                 ndt_omp->setNeighborhoodSearchMethod(pclomp::DIRECT7);
+                RCLCPP_INFO(this->get_logger(), "Using DIRECT7 neighborhood search method");
             } else if (ndt_neighbor_search_method_ == "KDTREE") {
                 ndt_omp->setNeighborhoodSearchMethod(pclomp::KDTREE);
+                RCLCPP_INFO(this->get_logger(), "Using KDTREE neighborhood search method");
             } else {
                 RCLCPP_ERROR(this->get_logger(), "Unknown NDT neighbor search method: %s", ndt_neighbor_search_method_.c_str());
                 return nullptr;
@@ -193,13 +211,15 @@ private:
             } else if (ndt_neighbor_search_method_ == "DIRECT7") {
                 ndt->setNeighborSearchMethod(fast_gicp::NeighborSearchMethod::DIRECT7);
             } else if (ndt_neighbor_search_method_ == "DIRECT_RADIUS") {
-                ndt->setNeighborSearchMethod(fast_gicp::NeighborSearchMethod::DIRECT_RADIUS, ndt_neightbor_search_radius_);
+                ndt->setNeighborSearchMethod(fast_gicp::NeighborSearchMethod::DIRECT_RADIUS, ndt_neighbor_search_radius_);
             } else {
                 RCLCPP_ERROR(this->get_logger(), "Unknown NDT neighbor search method: %s", ndt_neighbor_search_method_.c_str());
                 return nullptr;
             }
             return ndt;
         } else if (reg_method_ == "gicp" || reg_method_ == "vgicp") {
+            std::string method = reg_method_ == "gicp" ? "GICP" : "VGICP";
+            RCLCPP_INFO(this->get_logger(), "%s is selected", method.c_str());
             std::shared_ptr<small_gicp::RegistrationPCL<PointT, PointT>> gicp(new small_gicp::RegistrationPCL<PointT, PointT>());
             gicp->setNumThreads(num_threads_);
             gicp->setMaxCorrespondenceDistance(gicp_max_correspondence_distance_);
@@ -311,7 +331,7 @@ private:
         imu_buffer_.push_back(msg);
     }
     void pointsCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
-        if(!globalmap_) {
+        if(!globalmap_ || globalmap_->empty()) {
             RCLCPP_WARN(this->get_logger(), "Global map is not set yet. Ignoring point cloud.");
             return;
         }
@@ -415,19 +435,33 @@ private:
             registration_,
             Eigen::Vector3f(p.x, p.y, p.z),
             Eigen::Quaternionf(q.w, q.x, q.y, q.z),
+            filter_type_,
             cool_time_duration_
         ));
     }
 
     void globalMapCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
         RCLCPP_INFO(this->get_logger(), "Global map received!");
+        std::lock_guard<std::mutex> lock(reg_mutex_);
         if (registration_ == nullptr) registration_ = createRegistration();
 
-        globalmap_ = std::make_shared<pcl::PointCloud<PointT>>();
-        pcl::fromROSMsg(*msg, *globalmap_);
+        pcl::PointCloud<PointT>::Ptr map(new pcl::PointCloud<PointT>());
+        pcl::fromROSMsg(*msg, *map);
+        std::vector<int> dummy;
+        pcl::removeNaNFromPointCloud(*map, *map, dummy);
+        map->is_dense = true;
+        map->height = 1;
+        map->width = map->size();
+
+        if (map->empty()) {
+            RCLCPP_ERROR(this->get_logger(), "Received empty/invalid global map. Waiting next...");
+            return;
+        }
+
+        globalmap_ = map;
         registration_->setInputTarget(globalmap_);
 
-        if (use_globlal_localization_) {
+        if (use_global_localization_) {
             RCLCPP_INFO(this->get_logger(), "Global localization is enabled. Waiting for initial pose input.");
             simple_3d_localization::srv::SetGlobalMap::Request req;
             simple_3d_localization::srv::SetGlobalMap::Response res;
@@ -451,7 +485,7 @@ private:
     // variables ------------------------------------------------------------------------------------
     std::string robot_odom_frame_id_, odom_child_frame_id_;
     std::string reg_method_, ndt_neighbor_search_method_;
-    double ndt_neightbor_search_radius_;
+    double ndt_neighbor_search_radius_;
     double ndt_resolution_;
     int gicp_correspondence_randomness_;
     double gicp_max_correspondence_distance_;
@@ -462,7 +496,9 @@ private:
     bool invert_acc_, invert_gyro_;
     bool odometry_based_prediction_;
     bool use_omp_;
-    bool specity_init_pose_;
+    bool specify_init_pose_;
+
+    FilterType filter_type_; // ekf, ukf
 
     // init pose params
     double cool_time_duration_;
@@ -487,6 +523,7 @@ private:
     // globalmap and registration method
     pcl::PointCloud<PointT>::Ptr globalmap_;
     pcl::Filter<PointT>::Ptr downsampler_;
+    std::mutex reg_mutex_;
     std::shared_ptr<pcl::Registration<PointT, PointT>> registration_;
     double downsample_leaf_size_;
 
@@ -495,7 +532,7 @@ private:
     std::unique_ptr<PoseEstimator> pose_estimator_;
 
     // global localization
-    bool use_globlal_localization_;
+    bool use_global_localization_;
     std::atomic_bool relocalizing_;
     std::unique_ptr<DeltaEstimator> delta_estimater_;
 

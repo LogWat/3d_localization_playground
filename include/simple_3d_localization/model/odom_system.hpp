@@ -1,9 +1,9 @@
 #pragma once
 
 #include <simple_3d_localization/filter/ukf.hpp>
-#include <simple_3d_localization/hdl_localization/system_model.hpp>
+#include <simple_3d_localization/model/system_model.hpp>
 
-namespace s3l::hdl_localization 
+namespace s3l::model
 {
 
 /**
@@ -12,7 +12,7 @@ namespace s3l::hdl_localization
  *       observation = [px, py, pz, qw, qx, qy, qz]
  *       指数写像を用いた方法を導入したほうが良いかもしれない
  */
-class OdomSystem : public SystemModel {
+class OdomSystemModel : public SystemModel {
 public:
     VectorXt f(const VectorXt& state, const VectorXt& control) const override {
         Matrix4t pt = Matrix4t::Identity();
@@ -45,4 +45,4 @@ public:
 };
 
 
-} // namespace s3l::hdl_localization
+} // namespace s3l::model
