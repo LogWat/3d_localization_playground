@@ -9,19 +9,20 @@
 
 #include <random>
 #include <Eigen/Dense>
+#include <simple_3d_localization/filter/filter.hpp>
 #include <simple_3d_localization/model/system_model.hpp>
 
 namespace s3l::filter
 {
 
 template <typename T>
-class UnscentedKalmanFilterX {
+class UnscentedKalmanFilterX : public KalmanFilterX<T> {
     using VectorXt = Eigen::Matrix<T, Eigen::Dynamic, 1>;
     using MatrixXt = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
 
 public:
     UnscentedKalmanFilterX(
-        const model::SystemModel& model,
+        model::SystemModel& model,
         int state_dim,
         int input_dim,
         int measurement_dim,
@@ -65,7 +66,7 @@ public:
     /**
      * @brief Predict the state and covariance of the system
      */
-    void predict() {
+    void predict() override {
         // 共分散行列が正定値であることを確認
         ensurePositiveFinite(cov_);
         // シグマ点を計算
@@ -98,7 +99,7 @@ public:
      * @brief Predict the measurement and covariance of the system
      * @param control input vector
      */
-    void predict(const VectorXt& control) {
+    void predict(const VectorXt& control) override {
         ensurePositiveFinite(cov_);
         computeSigmaPoints(mean_, cov_, sigma_points_);
         for (int i = 0; i < S_; i++) {
@@ -129,7 +130,7 @@ public:
      * @brief Correct the state and covariance of the system
      * @param measurement measurement vector
      */
-    void correct(const VectorXt& measurement) {
+    void correct(const VectorXt& measurement) override {
         // error variancesを含む拡張状態空間を考慮
         VectorXt ext_mean_pred = VectorXt::Zero(N_ + K_, 1);
         MatrixXt ext_cov_pred = MatrixXt::Zero(N_ + K_, N_ + K_);
@@ -176,7 +177,16 @@ public:
         cov_ = ext_cov.topLeftCorner(N_, N_);
     }
 
+    // KalmanFilterX<T> overrides
+    // 追加のインターフェイス実装
+    void setDt(double dt) override { system_model_.setDt(dt); }
+    void setProcessNoise(const MatrixXt& q) override { setProcessNoiseCov(q); }
+    void setMeasurementNoise(const MatrixXt& r) override { setMeasurementNoiseCov(r); }
 
+    const VectorXt& getState() const override { return getMean(); }
+    const MatrixXt& getCovariance() const override { return getCov(); }
+
+    
     /*              getter              */
     const VectorXt& getMean() const { return mean_; }
     const MatrixXt& getCov() const { return cov_; }
@@ -243,7 +253,7 @@ public:
     VectorXt mean_;
     MatrixXt cov_;
 
-    const model::SystemModel& system_model_;
+    model::SystemModel& system_model_;
     MatrixXt process_noise_;
     MatrixXt measurement_noise_;
 

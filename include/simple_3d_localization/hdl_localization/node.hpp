@@ -30,6 +30,7 @@
 #include <simple_3d_localization/hdl_localization/pose_estimator.hpp>
 #include <simple_3d_localization/hdl_localization/delta_estimator.hpp>
 
+#include <simple_3d_localization/type.hpp>
 #include <simple_3d_localization/msg/scan_matching_status.hpp>
 #include <simple_3d_localization/srv/set_global_map.hpp>
 #include <simple_3d_localization/srv/query_global_localization.hpp>
@@ -71,6 +72,19 @@ public:
             // TODO 実装
         }
 
+        // filter type (ukf, ekf)
+        std::string filter_type_str = this->declare_parameter<std::string>("filter_type", "ukf");
+        if (filter_type_str == "ukf") {
+            RCLCPP_INFO(this->get_logger(), "Using Unscented Kalman Filter (UKF) for pose estimation.");
+            filter_type_ = FilterType::UKF;
+        } else if (filter_type_str == "ekf") {
+            RCLCPP_INFO(this->get_logger(), "Using Extended Kalman Filter (EKF) for pose estimation.");
+            filter_type_ = FilterType::EKF;
+        } else {
+            RCLCPP_WARN(this->get_logger(), "Invalid filter type: %s. Using UKF by default.", filter_type_str.c_str());
+            filter_type_ = FilterType::UKF;
+        }
+
         // registation method (ndt_omp, ndt_cuda, gicp, vgicp) setup
         std::lock_guard<std::mutex> lock(reg_mutex_);
         registration_ = createRegistration();
@@ -95,8 +109,6 @@ public:
             "aligned_points", rclcpp::SensorDataQoS());
         pose_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(
             "odom", rclcpp::QoS(5));
-        ekf_pose_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(
-            "ekf_pose", rclcpp::QoS(5));
         status_pub_ = this->create_publisher<simple_3d_localization::msg::ScanMatchingStatus>(
             "scan_matching_status", rclcpp::SensorDataQoS());
 
@@ -117,8 +129,8 @@ public:
         delta_estimater_.reset(new DeltaEstimator(registration_));
 
         // initialize pose estimator
-        specity_init_pose_ = this->declare_parameter<bool>("specify_init_pose", false);
-        if (specity_init_pose_) {
+        specify_init_pose_ = this->declare_parameter<bool>("specify_init_pose", false);
+        if (specify_init_pose_) {
             RCLCPP_INFO(this->get_logger(), "Specify initial pose is enabled.");
             auto init_pose = this->declare_parameter<std::vector<float>>("init_pose", {0.0f, 0.0f, 0.0f});
             auto init_quat = this->declare_parameter<std::vector<float>>("init_quat", {0.0, 0.0, 0.0, 1.0});
@@ -129,7 +141,7 @@ public:
             Eigen::Vector3f pos(init_pose[0], init_pose[1], init_pose[2]);
             Eigen::Quaternionf quat(init_quat[0], init_quat[1], init_quat[2], init_quat[3]);
             pose_estimator_ = std::make_unique<PoseEstimator>(
-                registration_, pos, quat, cool_time_duration_
+                registration_, pos, quat, filter_type_, cool_time_duration_
             );
         }
     }
@@ -206,6 +218,8 @@ private:
             }
             return ndt;
         } else if (reg_method_ == "gicp" || reg_method_ == "vgicp") {
+            std::string method = reg_method_ == "gicp" ? "GICP" : "VGICP";
+            RCLCPP_INFO(this->get_logger(), "%s is selected", method.c_str());
             std::shared_ptr<small_gicp::RegistrationPCL<PointT, PointT>> gicp(new small_gicp::RegistrationPCL<PointT, PointT>());
             gicp->setNumThreads(num_threads_);
             gicp->setMaxCorrespondenceDistance(gicp_max_correspondence_distance_);
@@ -221,7 +235,7 @@ private:
     }
 
     
-    void publishOdometry(const rclcpp::Time& stamp, const Eigen::Matrix4f& pose, const std::string& filter_type) {
+    void publishOdometry(const rclcpp::Time& stamp, const Eigen::Matrix4f& pose) {
         geometry_msgs::msg::TransformStamped map_wrt_frame = tf2::eigenToTransform(Eigen::Isometry3d(pose.inverse().cast<double>()));
         map_wrt_frame.header.stamp = stamp;
         map_wrt_frame.header.frame_id = robot_odom_frame_id_;
@@ -258,8 +272,7 @@ private:
         odom_msg->twist.twist.linear.y = 0.0;
         odom_msg->twist.twist.linear.z = 0.0;
 
-        if (filter_type == "ekf") ekf_pose_pub_->publish(std::move(odom_msg));
-        else pose_pub_->publish(std::move(odom_msg));
+        pose_pub_->publish(std::move(odom_msg));
     }
 
     void publishScanMatchingStatus(const std_msgs::msg::Header& header, PointCloudT::ConstPtr aligned) {
@@ -410,8 +423,7 @@ private:
             publishScanMatchingStatus(msg->header, aligned);
         }
 
-        publishOdometry(msg->header.stamp, pose_estimator_->matrix(), "none");
-        publishOdometry(msg->header.stamp, pose_estimator_->ekf_matrix(), "ekf");
+        publishOdometry(msg->header.stamp, pose_estimator_->matrix());
     }
 
     void initialPoseCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::ConstSharedPtr& msg) {
@@ -423,6 +435,7 @@ private:
             registration_,
             Eigen::Vector3f(p.x, p.y, p.z),
             Eigen::Quaternionf(q.w, q.x, q.y, q.z),
+            filter_type_,
             cool_time_duration_
         ));
     }
@@ -483,7 +496,9 @@ private:
     bool invert_acc_, invert_gyro_;
     bool odometry_based_prediction_;
     bool use_omp_;
-    bool specity_init_pose_;
+    bool specify_init_pose_;
+
+    FilterType filter_type_; // ekf, ukf
 
     // init pose params
     double cool_time_duration_;
@@ -494,7 +509,6 @@ private:
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initialpose_sub_;
 
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pose_pub_;
-    rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr ekf_pose_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr aligned_pub_;
     rclcpp::Publisher<simple_3d_localization::msg::ScanMatchingStatus>::SharedPtr status_pub_;
 

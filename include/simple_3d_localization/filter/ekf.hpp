@@ -2,12 +2,13 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <simple_3d_localization/filter/filter.hpp>
 #include <simple_3d_localization/model/ekf_system_model.hpp>
 
 namespace s3l::filter {
 
 template <typename T>
-class ExtendedKalmanFilterX {
+class ExtendedKalmanFilterX : public KalmanFilterX<T> {
     using VectorXt = Eigen::Matrix<T, Eigen::Dynamic, 1>;
     using MatrixXt = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
 public:
@@ -65,15 +66,23 @@ public:
         P_ = (I - K * H) * P_ * (I - K * H).transpose() + K * measurement_noise * K.transpose();
     }
 
-    /* Setter */
-    void setProcessNoise(const MatrixXt& process_noise) {
+    // KalmanFilterX<T> overrides
+    void setDt(double dt) override {
+        last_dt_ = std::max(std::min(dt, 1.0), 1e-6);
+        model_.setDt(last_dt_);
+    }
+    void setProcessNoise(const MatrixXt& process_noise) override {
         Q_ = process_noise;
     }
-
-    /* Getter */
-    const VectorXt& getState() const {
-        return X_;
+    void setMeasurementNoise(const MatrixXt& measurement_noise) override {
+        R_ = measurement_noise;
     }
+    void predict() override { predict(last_dt_); }
+    void predict(const VectorXt& control) override { predict(last_dt_, control); }
+    void correct(const VectorXt& measurement) override { correct(measurement, R_); }
+
+    const VectorXt& getState() const override { return X_; }
+    const MatrixXt& getCovariance() const override { return P_; }
 
 private:
     const int state_dim_;
@@ -81,6 +90,9 @@ private:
     VectorXt X_; // State vector
     MatrixXt P_; // State covariance matrix
     MatrixXt Q_; // Process noise covariance
+
+    MatrixXt R_;       // measurement noise (for interface-based correct)
+    double   last_dt_{0.01};
 };
 
 } // namespace s3l::filter
