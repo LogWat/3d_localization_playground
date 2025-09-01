@@ -2,7 +2,6 @@
  * @file cloud_preprocessor.hpp
  * @brief ref: https://github.com/koide3/glim
  * @brief This file is modified from glim/preprocess/cloud_preprocessor.hpp and glim/preprocess/preprocesed_frame.hpp
- * @author LogWat
  */
 
 #pragma once

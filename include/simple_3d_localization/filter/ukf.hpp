@@ -1,7 +1,6 @@
 /**
  * Unscented Kalman Filter (UKF) class
  * @ref https://github.com/koide3/hdl_localization/blob/master/include/kkl/alg/unscented_kalman_filter.hpp
- * @author LogWat
  * @date 2025/05/13
  */
 

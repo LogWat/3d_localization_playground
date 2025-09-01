@@ -1,7 +1,6 @@
 /**
  * @file 3d_pose_ekf.hpp
  * @brief Extended Kalman Filter (EKF) system model for 3D pose estimation
- * @author LogWat
  */
 
 
@@ -134,10 +133,10 @@ private:
 
         // Position and velocity Jacobian
         F.block<3, 3>(0, 0) = MatrixXt::Identity(3, 3);
-        F.block<3, 3>(0, 7) = MatrixXt::Identity(3, 3) * dt_;
+        F.block<3, 3>(0, 3) = MatrixXt::Identity(3, 3) * dt_;
 
         // Quaternion Jacobian (assuming small angle approximation)
-        F.block<4, 4>(3, 3) = Matrix4t::Identity();
+        F.block<4, 4>(6, 6) = MatrixXt::Identity(4, 4);
 
         // Velocity Jacobian
         F.block<3, 3>(7, 7) = MatrixXt::Identity(3, 3);

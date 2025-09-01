@@ -2,6 +2,13 @@
 
 #include <Eigen/Core>
 
+using EigenType = double;
+using VectorXt = Eigen::Matrix<EigenType, Eigen::Dynamic, 1>;
+using MatrixXt = Eigen::Matrix<EigenType, Eigen::Dynamic, Eigen::Dynamic>;
+using Vector3t = Eigen::Matrix<EigenType, 3, 1>;
+using Matrix3t = Eigen::Matrix<EigenType, 3, 3>;
+using Quaterniont = Eigen::Quaternion<EigenType>;
+
 enum FilterType {
     UKF,
     EKF
