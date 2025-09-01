@@ -27,6 +27,9 @@
   <depend>small_gicp</depend>
   <depend>fast_gicp</depend>
   <depend>sophus</depend>
+  
+  <build_depend>ceres-solver</build_depend>
+  <exec_depend>ceres-solver</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

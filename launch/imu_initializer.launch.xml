@@ -1,0 +1,38 @@
+<launch>
+  <!-- arguments -->
+  <arg name="imu_topic" default="/imu/data" />
+  <arg name="min_samples" default="200" />
+  <arg name="gravity_magnitude" default="9.80665" />
+  <arg name="auto_initialize" default="true" />
+  <arg name="timeout_sec" default="5.0" />
+  <arg name="use_sim_time" default="false" />
+  <arg name="namespace" default="imu_initializer" />
+  <arg name="container_name" default="imu_initializer_container" />
+  <arg name="container_thread_num" default="2" />
+
+  <!-- component container -->
+  <set_parameter name="use_sim_time" value="$(var use_sim_time)"/>
+
+  <node_container
+    pkg="rclcpp_components"
+    exec="component_container_mt"
+    namespace="$(var namespace)"
+    name="$(var container_name)"
+    output="screen">
+    <param name="thread_num" value="$(var container_thread_num)"/>
+  </node_container>
+
+  <load_composable_node
+    target="$(var namespace)/$(var container_name)">
+
+    <composable_node pkg="simple_3d_localization"
+                    plugin="s3l::utils::ImuInitializerNode"
+                    name="imu_initializer">
+      <param name="imu_topic" value="$(var imu_topic)" />
+      <param name="min_samples" value="$(var min_samples)" />
+      <param name="gravity_magnitude" value="$(var gravity_magnitude)" />
+      <param name="auto_initialize" value="$(var auto_initialize)" />
+      <param name="timeout_sec" value="$(var timeout_sec)" />
+    </composable_node>
+  </load_composable_node>
+</launch>
