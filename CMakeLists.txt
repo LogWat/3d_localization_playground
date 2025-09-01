@@ -14,13 +14,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Option
 option(S3L_USE_FAST_GICP "Link fast_gicp" OFF)
-option(S3L_USE_SMALL_GICP "Link small_gicp" OFF)
+option(S3L_USE_SMALL_GICP "Link small_gicp" ON)
 option(S3L_DISABLE_EIGEN_ALIGN "Disable Eigen alignment/vectorization" OFF)
 
 # Compiler options
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
   set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0 -g")
 
   if(NOT CMAKE_BUILD_TYPE OR CMAKE_BUILD_TYPE STREQUAL "Release" OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo")
@@ -51,6 +51,7 @@ find_package(small_gicp REQUIRED)
 find_package(Sophus REQUIRED)
 find_package(ndt_omp REQUIRED)
 find_package(fast_gicp REQUIRED)
+find_package(Ceres REQUIRED)
 
 # ROS IDL generation
 set(msg_files
@@ -76,6 +77,11 @@ file(GLOB_RECURSE hdl_localization_src_files
   LIST_DIRECTORIES false
   RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
   "src/${PROJECT_DIR}/hdl_localization/node.cpp")
+
+file(GLOB_RECURSE imu_initializer_src_files
+  LIST_DIRECTORIES false
+  RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+  "src/${PROJECT_DIR}/utils/imu_initializer_node.cpp")
 
 # Globalmap Server
 list(LENGTH globalmap_server_src_files globalmap_src_count)
@@ -129,7 +135,20 @@ if(hdl_src_count GREATER 0)
   )
 endif()
 
-foreach(target globalmap_server_node hdl_localization_node)
+# IMU Initializer
+list(LENGTH imu_initializer_src_files imu_src_count)
+if(imu_src_count GREATER 0)
+  ament_auto_add_library(imu_initializer_node SHARED ${imu_initializer_src_files})
+  target_link_libraries(imu_initializer_node Ceres::ceres)
+  ament_target_dependencies(imu_initializer_node rclcpp rclcpp_components)
+  rclcpp_components_register_nodes(imu_initializer_node
+    "${PROJECT_NAMESPACE}::utils::ImuInitializerNode"
+  )
+endif()
+ament_export_dependencies(Ceres)
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+
+foreach(target globalmap_server_node hdl_localization_node imu_initializer_node)
   if(TARGET ${target})
     target_compile_features(${target} PUBLIC cxx_std_17)
     target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
