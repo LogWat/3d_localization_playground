@@ -71,6 +71,7 @@ public:
         last_dt_ = std::max(std::min(dt, 1.0), 1e-6);
         model_.setDt(last_dt_);
     }
+    void setMean(const VectorXt& mean) override { X_ = mean; }
     void setProcessNoise(const MatrixXt& process_noise) override {
         Q_ = process_noise;
     }
