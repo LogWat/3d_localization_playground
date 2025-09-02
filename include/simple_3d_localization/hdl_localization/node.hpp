@@ -19,6 +19,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
+#include <geometry_msgs/msg/vector3.hpp>
 
 #include <pclomp/ndt_omp.h>
 #include <fast_gicp/ndt/ndt_cuda.hpp>
@@ -51,6 +52,8 @@ public:
         reg_method_ = this->declare_parameter<std::string>("registration_method", "ndt_omp"); // "ndt_cuda", "ndt_omp", "gicp", "vgicp"
         ndt_neighbor_search_method_ = this->declare_parameter<std::string>("ndt_neighbor_search_method", "DIRECT7");
         use_imu_ = this->declare_parameter<bool>("use_imu", true);
+        use_imu_initializer_ = this->declare_parameter<bool>("use_imu_initializer", true);
+        imu_initialized_ = use_imu_initializer_ && use_imu_ ? false : true;
         invert_acc_ = this->declare_parameter<bool>("invert_acc", false);
         invert_gyro_ = this->declare_parameter<bool>("invert_gyro", false);
         use_omp_ = this->declare_parameter<bool>("use_omp", true);
@@ -70,6 +73,23 @@ public:
             RCLCPP_INFO(this->get_logger(), "Global localization is enabled.");
             RCLCPP_INFO(this->get_logger(), "Wait for global localization services");
             // TODO 実装
+        }
+
+        if (use_imu_ && !imu_initialized_) {
+            RCLCPP_INFO(this->get_logger(), "Waiting for IMU initialization...");
+            initial_g_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+                "imu_init/gravity", rclcpp::QoS(1).transient_local(),
+                std::bind(&LocalizationNode::initialGravityCallback, this, std::placeholders::_1));
+            initial_ba_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+                "imu_init/accel_bias", rclcpp::QoS(1).transient_local(),
+                std::bind(&LocalizationNode::initialAccelBiasCallback, this, std::placeholders::_1));
+            initial_bg_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
+                "imu_init/gyro_bias", rclcpp::QoS(1).transient_local(),
+                std::bind(&LocalizationNode::initialGyroBiasCallback, this, std::placeholders::_1));
+        } else if (use_imu_ && imu_initialized_) {
+            RCLCPP_INFO(this->get_logger(), "IMU initialization is skipped. Using provided parameters.");
+        } else {
+            RCLCPP_WARN(this->get_logger(), "IMU is not used.");
         }
 
         // filter type (ukf, ekf)
@@ -143,6 +163,11 @@ public:
             pose_estimator_ = std::make_unique<PoseEstimator>(
                 registration_, pos, quat, filter_type_, cool_time_duration_
             );
+            est_initialized_ = true;
+            if (imu_initialized_ && use_imu_) {
+                RCLCPP_INFO(this->get_logger(), "Initializing pose estimator with IMU parameters.");
+                pose_estimator_->initializeWithBiasAndGravity(imu_gravity_, imu_accel_bias_, imu_gyro_bias_);
+            }
         }
     }
 
@@ -336,6 +361,11 @@ private:
             return;
         }
 
+        if (use_imu_ && !imu_initialized_) {
+            RCLCPP_WARN(this->get_logger(), "IMU is not initialized yet. Ignoring point cloud.");
+            return;
+        }
+
         const auto & stamp = rclcpp::Time(msg->header.stamp.sec, msg->header.stamp.nanosec);
         PointCloudT::Ptr pcl_cloud(new PointCloudT);
         pcl::fromROSMsg(*msg, *pcl_cloud);
@@ -438,6 +468,10 @@ private:
             filter_type_,
             cool_time_duration_
         ));
+        est_initialized_ = true;
+        if (imu_initialized_ && use_imu_) {
+            pose_estimator_->initializeWithBiasAndGravity(imu_gravity_, imu_accel_bias_, imu_gyro_bias_);
+        }
     }
 
     void globalMapCallback(const sensor_msgs::msg::PointCloud2::ConstSharedPtr& msg) {
@@ -482,6 +516,43 @@ private:
         globalmap_sub_.reset();
     }
 
+
+    void initialGravityCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& msg) {
+        // imu_gravity_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
+        imu_gravity_ = Eigen::Vector3f(0, 0, -9.80665); // TODO: imu_initializer(local) ⇔ this (global)の差をなんとかする
+        has_init_g = true;
+        checkImuInitRead();
+    }
+    void initialAccelBiasCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& msg) {
+        imu_accel_bias_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
+        has_init_ba = true;
+        checkImuInitRead();
+    }
+    void initialGyroBiasCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& msg) {
+        imu_gyro_bias_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
+        has_init_bg = true;
+        checkImuInitRead();
+    }
+    void checkImuInitRead() {
+        if (!imu_initialized_ && has_init_ba && has_init_bg && has_init_g) {
+            imu_initialized_ = true;
+            RCLCPP_INFO(this->get_logger(), "IMU initialized with provided parameters.");
+            RCLCPP_INFO(this->get_logger(), "  Gravity: [%f, %f, %f]", imu_gravity_.x(), imu_gravity_.y(), imu_gravity_.z());
+            RCLCPP_INFO(this->get_logger(), "  Accel Bias: [%f, %f, %f]", imu_accel_bias_.x(), imu_accel_bias_.y(), imu_accel_bias_.z());
+            RCLCPP_INFO(this->get_logger(), "  Gyro Bias: [%f, %f, %f]", imu_gyro_bias_.x(), imu_gyro_bias_.y(), imu_gyro_bias_.z());
+
+            // shutdown subscribers
+            initial_g_sub_.reset();
+            initial_ba_sub_.reset();
+            initial_bg_sub_.reset();
+
+            if (est_initialized_) {
+                RCLCPP_INFO(this->get_logger(), "Updating pose estimator with IMU parameters.");
+                pose_estimator_->initializeWithBiasAndGravity(imu_gravity_, imu_accel_bias_, imu_gyro_bias_);
+            }
+        }
+    }
+
     // variables ------------------------------------------------------------------------------------
     std::string robot_odom_frame_id_, odom_child_frame_id_;
     std::string reg_method_, ndt_neighbor_search_method_;
@@ -492,7 +563,7 @@ private:
     double gicp_voxel_resolution_;
     int num_threads_;
 
-    bool use_imu_;
+    bool use_imu_, use_imu_initializer_, imu_initialized_;
     bool invert_acc_, invert_gyro_;
     bool odometry_based_prediction_;
     bool use_omp_;
@@ -507,6 +578,12 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr points_sub_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr globalmap_sub_;
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initialpose_sub_;
+
+    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_g_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_ba_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::Vector3>::SharedPtr initial_bg_sub_;
+    Eigen::Vector3f imu_gravity_, imu_accel_bias_, imu_gyro_bias_;
+    bool has_init_g{false}, has_init_ba{false}, has_init_bg{false};
 
     rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr pose_pub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr aligned_pub_;
@@ -530,6 +607,7 @@ private:
     // pose estimator
     std::mutex pose_estimator_mutex_;
     std::unique_ptr<PoseEstimator> pose_estimator_;
+    bool est_initialized_{false};
 
     // global localization
     bool use_global_localization_;

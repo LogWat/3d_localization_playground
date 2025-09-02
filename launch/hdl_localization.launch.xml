@@ -23,6 +23,7 @@
   <arg name="registration_method" default="vgicp"/> <!-- "ndt_cuda", "ndt_omp", "gicp", "vgicp" -->
   <arg name="ndt_neighbor_search_method" default="DIRECT7"/> <!-- "DIRECT1", "DIRECT7", "KDTREE" -->
   <arg name="use_imu" default="true"/>
+  <arg name="use_imu_initializer" default="false"/>
   <arg name="invert_acc" default="false"/>
   <arg name="invert_gyro" default="false"/>
   <arg name="use_omp" default="true"/>
@@ -87,6 +88,7 @@
         <param name="registration_method" value="$(var registration_method)"/>
         <param name="ndt_neighbor_search_method" value="$(var ndt_neighbor_search_method)"/>
         <param name="use_imu" value="$(var use_imu)"/>
+        <param name="use_imu_initializer" value="$(var use_imu_initializer)"/>
         <param name="invert_acc" value="$(var invert_acc)"/>
         <param name="invert_gyro" value="$(var invert_gyro)"/>
         <param name="use_omp" value="$(var use_omp)"/>

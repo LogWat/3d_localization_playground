@@ -56,7 +56,7 @@ public:
         process_noise_.middleRows(0, 3) *= 1.0;
         process_noise_.middleRows(3, 3) *= 1.0;
         process_noise_.middleRows(6, 4) *= 0.5;
-        process_noise_.middleRows(10, 3) *= 1e-3;
+        process_noise_.middleRows(10, 3) *= 1e-5;
         process_noise_.middleRows(13, 3) *= 1e-5;
         process_noise_.middleRows(16, 3) *= 1e-5;
 
@@ -308,6 +308,16 @@ public:
     }
     const std::optional<Eigen::Matrix4f>& odom_prediction_error() const {
         return odom_pred_error_;
+    }
+
+
+    /* utils */
+    void initializeWithBiasAndGravity(const Eigen::Vector3f& gravity, const Eigen::Vector3f& accel_bias, const Eigen::Vector3f& gyro_bias) {
+        Eigen::VectorXf mean = filter_->getState();
+        mean.middleRows(10, 3) = accel_bias;
+        mean.middleRows(13, 3) = gyro_bias;
+        mean.middleRows(16, 3) = gravity;
+        filter_->setMean(mean);
     }
 
 private:

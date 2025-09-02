@@ -17,6 +17,7 @@ public:
     virtual ~KalmanFilterX() = default;
 
     virtual void setDt(double dt) = 0;
+    virtual void setMean(const VectorXt& mean) = 0;
     virtual void setProcessNoise(const MatrixXt& Q) = 0;
     virtual void setMeasurementNoise(const MatrixXt& R) = 0;
 

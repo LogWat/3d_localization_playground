@@ -180,6 +180,7 @@ public:
     // KalmanFilterX<T> overrides
     // 追加のインターフェイス実装
     void setDt(double dt) override { system_model_.setDt(dt); }
+    void setMean(const VectorXt& mean) override { setX(mean); }
     void setProcessNoise(const MatrixXt& q) override { setProcessNoiseCov(q); }
     void setMeasurementNoise(const MatrixXt& r) override { setMeasurementNoiseCov(r); }
 
@@ -197,7 +198,7 @@ public:
     const MatrixXt& getKalmanGain() const { return kalman_gain_; }
 
     /*              setter              */
-    UnscentedKalmanFilterX& setMean(const VectorXt& m) { mean_ = m; return *this; }
+    UnscentedKalmanFilterX& setX(const VectorXt& m) { mean_ = m; return *this; }
     UnscentedKalmanFilterX& setCov(const MatrixXt& c) { cov_ = c; return *this; }
     UnscentedKalmanFilterX& setProcessNoiseCov(const MatrixXt& q) { process_noise_ = q; return *this; }
     UnscentedKalmanFilterX& setMeasurementNoiseCov(const MatrixXt& r) { measurement_noise_ = r; return *this; }
