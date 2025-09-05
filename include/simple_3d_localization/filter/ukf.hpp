@@ -15,11 +15,7 @@
 namespace s3l::filter
 {
 
-template <typename T>
-class UnscentedKalmanFilterX : public KalmanFilterX<T> {
-    using VectorXt = Eigen::Matrix<T, Eigen::Dynamic, 1>;
-    using MatrixXt = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
-
+class UnscentedKalmanFilterX : public KalmanFilterX {
 public:
     UnscentedKalmanFilterX(
         model::SystemModel& model,
@@ -61,38 +57,6 @@ public:
         for (ext_weights_(0) = lambda_ / (N_ + K_ + lambda_); i < 2 * (N_ + K_) + 1; ++i) {
             ext_weights_(i) = 1.0 / (2 * (N_ + K_ + lambda_));
         }
-    }
-
-    /**
-     * @brief Predict the state and covariance of the system
-     */
-    void predict() override {
-        // 共分散行列が正定値であることを確認
-        ensurePositiveFinite(cov_);
-        // シグマ点を計算
-        computeSigmaPoints(mean_, cov_, sigma_points_);
-        // 各シグマ点に対して、状態遷移関数を適用
-        for (int i = 0; i < S_; i++) {
-            sigma_points_.row(i) = system_model_.f(sigma_points_.row(i));
-        }
-
-        const auto& R = process_noise_;
-
-        // Unscented transformation
-        VectorXt mean_pred(mean_.size());
-        MatrixXt cov_pred(cov_.rows(), cov_.cols());
-        mean_pred.setZero();
-        cov_pred.setZero();
-        for (int i = 0; i < S_; i++) {
-            mean_pred += weights_(i) * sigma_points_.row(i);
-        }
-        for (int i = 0; i < S_; i++) {
-            VectorXt diff = sigma_points_.row(i).transpose() - mean_pred;
-            cov_pred += weights_(i) * diff * diff.transpose();
-        }
-
-        mean_ = mean_pred;
-        cov_ = cov_pred + R;
     }
 
     /**
@@ -177,31 +141,15 @@ public:
         cov_ = ext_cov.topLeftCorner(N_, N_);
     }
 
-    // KalmanFilterX<T> overrides
+    // KalmanFilterX overrides
     // 追加のインターフェイス実装
     void setDt(double dt) override { system_model_.setDt(dt); }
-    void setMean(const VectorXt& mean) override { setX(mean); }
-    void setProcessNoise(const MatrixXt& q) override { setProcessNoiseCov(q); }
-    void setMeasurementNoise(const MatrixXt& r) override { setMeasurementNoiseCov(r); }
+    void setMean(const VectorXt& mean) override { mean_ = mean; }
+    void setProcessNoise(const MatrixXt& q) override { process_noise_ = q; }
+    void setMeasurementNoise(const MatrixXt& r) override { measurement_noise_ = r; }
 
-    const VectorXt& getState() const override { return getMean(); }
-    const MatrixXt& getCovariance() const override { return getCov(); }
-
-    
-    /*              getter              */
-    const VectorXt& getMean() const { return mean_; }
-    const MatrixXt& getCov() const { return cov_; }
-    const MatrixXt& getSigmaPoints() const { return sigma_points_; }
-    const model::SystemModel& getSystemModel() { return system_model_; }
-    const MatrixXt& getProcessNoiseCov() const { return process_noise_; }
-    const MatrixXt& getMeasurementNoiseCov() const { return measurement_noise_; }
-    const MatrixXt& getKalmanGain() const { return kalman_gain_; }
-
-    /*              setter              */
-    UnscentedKalmanFilterX& setX(const VectorXt& m) { mean_ = m; return *this; }
-    UnscentedKalmanFilterX& setCov(const MatrixXt& c) { cov_ = c; return *this; }
-    UnscentedKalmanFilterX& setProcessNoiseCov(const MatrixXt& q) { process_noise_ = q; return *this; }
-    UnscentedKalmanFilterX& setMeasurementNoiseCov(const MatrixXt& r) { measurement_noise_ = r; return *this; }
+    [[nodiscard]] const VectorXt& getState() const override { return mean_; }
+    [[nodiscard]] const MatrixXt& getCovariance() const override { return cov_; }
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW // For Eigen's dynamic size matrices
 private:
@@ -250,7 +198,6 @@ private:
 
     const int N_, M_, K_, S_;
 
-public:
     VectorXt mean_;
     MatrixXt cov_;
 
@@ -258,7 +205,7 @@ public:
     MatrixXt process_noise_;
     MatrixXt measurement_noise_;
 
-    T lambda_;
+    SystemType lambda_;
     VectorXt weights_;
 
     MatrixXt sigma_points_;
@@ -270,7 +217,7 @@ public:
     MatrixXt kalman_gain_;
 
     std::mt19937 mt;                            // Random number generator
-    std::normal_distribution<T> normal_dist;    // Normal distribution for generating random numbers
+    std::normal_distribution<SystemType> normal_dist;    // Normal distribution for generating random numbers
 };
 
 } // namespace s3l::filter
