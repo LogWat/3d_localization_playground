@@ -48,6 +48,7 @@ public:
     : rclcpp::Node("s3l_hdl_localization", options), tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
         robot_odom_frame_id_ = this->declare_parameter<std::string>("robot_odom_frame_id", "odom");
         odom_child_frame_id_ = this->declare_parameter<std::string>("odom_child_frame_id", "base_link");
+        scanmatch_frame_id_ = this->declare_parameter<std::string>("scanmatch_frame_id", "ndt_base_link");
         reg_method_ = this->declare_parameter<std::string>("registration_method", "ndt_omp"); // "ndt_cuda", "ndt_omp", "gicp", "vgicp"
         ndt_neighbor_search_method_ = this->declare_parameter<std::string>("ndt_neighbor_search_method", "DIRECT7");
         use_imu_initializer_ = this->declare_parameter<bool>("use_imu_initializer", false);
@@ -61,6 +62,8 @@ public:
         gicp_voxel_resolution_ = this->declare_parameter<double>("gicp_voxel_resolution", 1.0);
         num_threads_ = this->declare_parameter<int>("num_threads", 8);
         cool_time_duration_ = this->declare_parameter<double>("cool_time_duration", 0.5);
+        use_mahalanobis_gating_ = this->declare_parameter<bool>("use_mahalanobis_gating", false);
+        mahalanobis_threshold_ = this->declare_parameter<double>("mahalanobis_threshold", 33.11);
 
         ndt_neighbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
         ndt_resolution_ = this->declare_parameter<double>("ndt_resolution", 1.0);
@@ -155,10 +158,12 @@ public:
                 return;
             }
             Eigen::Vector3f pos(init_pose[0], init_pose[1], init_pose[2]);
-            Eigen::Quaternionf quat(init_quat[0], init_quat[1], init_quat[2], init_quat[3]);
+            Eigen::Quaternionf quat(init_quat[3], init_quat[0], init_quat[1], init_quat[2]);
             pose_estimator_ = std::make_unique<PoseEstimator>(
                 registration_, pos, quat, filter_type_, cool_time_duration_
             );
+            pose_estimator_->useMahalanobisGating(use_mahalanobis_gating_);
+            pose_estimator_->setMahalanobisThreshold(mahalanobis_threshold_);
             est_initialized_ = true;
             if (imu_initialized_) {
                 RCLCPP_INFO(this->get_logger(), "Initializing pose estimator with IMU parameters.");
@@ -256,6 +261,16 @@ private:
 
     
     void publishOdometry(const rclcpp::Time& stamp, const Eigen::Matrix4f& pose) {
+        // 入力 pose 検証
+        if (!pose.allFinite()) {
+            RCLCPP_WARN(this->get_logger(), "publishOdometry: pose has NaN. Skipping TF/odom publish.");
+            return;
+        }
+        Eigen::Quaterniond q(pose.block<3,3>(0,0).cast<double>());
+        if (!std::isfinite(q.w()) || q.norm() < 1e-10) {
+            RCLCPP_WARN(this->get_logger(), "publishOdometry: invalid quaternion. Skipping.");
+            return;
+        }
         geometry_msgs::msg::TransformStamped map_wrt_frame = tf2::eigenToTransform(Eigen::Isometry3d(pose.inverse().cast<double>()));
         map_wrt_frame.header.stamp = stamp;
         map_wrt_frame.header.frame_id = robot_odom_frame_id_;
@@ -321,6 +336,16 @@ private:
         status->matching_error /= std::max(1, num_inliers);
         status->inlier_fraction = static_cast<float>(num_inliers) / std::max(1, num_valid_points);
         status->relative_pose = tf2::eigenToTransform(Eigen::Isometry3d(registration_->getFinalTransformation().cast<double>())).transform;
+
+        if (tf_broadcaster_) {
+            geometry_msgs::msg::TransformStamped ndt_tf = tf2::eigenToTransform(
+                Eigen::Isometry3d(registration_->getFinalTransformation().cast<double>())
+            );
+            ndt_tf.header = header;
+            ndt_tf.header.frame_id = "map";
+            ndt_tf.child_frame_id = scanmatch_frame_id_;
+            tf_broadcaster_->sendTransform(ndt_tf);
+        }
 
         status->prediction_labels.reserve(2);
         status->prediction_errors.reserve(2);
@@ -440,6 +465,8 @@ private:
             filter_type_,
             cool_time_duration_
         ));
+        pose_estimator_->useMahalanobisGating(use_mahalanobis_gating_);
+        pose_estimator_->setMahalanobisThreshold(mahalanobis_threshold_);
         est_initialized_ = true;
         if (imu_initialized_) {
             pose_estimator_->initializeWithBiasAndGravity(imu_gravity_, imu_accel_bias_, imu_gyro_bias_);
@@ -526,7 +553,7 @@ private:
     }
 
     // variables ------------------------------------------------------------------------------------
-    std::string robot_odom_frame_id_, odom_child_frame_id_;
+    std::string robot_odom_frame_id_, odom_child_frame_id_, scanmatch_frame_id_;
     std::string reg_method_, ndt_neighbor_search_method_;
     double ndt_neighbor_search_radius_;
     double ndt_resolution_;
@@ -539,6 +566,9 @@ private:
     bool invert_acc_, invert_gyro_;
     bool use_omp_;
     bool specify_init_pose_;
+    bool use_mahalanobis_gating_;
+
+    double mahalanobis_threshold_;
 
     FilterType filter_type_; // ekf, ukf
 

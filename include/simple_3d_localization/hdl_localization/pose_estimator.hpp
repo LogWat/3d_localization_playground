@@ -13,6 +13,7 @@
 #include <simple_3d_localization/filter/ekf.hpp>
 #include <simple_3d_localization/model/ukf_pose.hpp>
 #include <simple_3d_localization/model/ekf_pose.hpp>
+#include <simple_3d_localization/mahalanobis.hpp>
 
 namespace s3l
 {
@@ -55,14 +56,14 @@ public:
         process_noise_.middleRows(0, 3) *= 1.0;
         process_noise_.middleRows(3, 3) *= 1.0;
         process_noise_.middleRows(6, 4) *= 0.5;
-        process_noise_.middleRows(10, 3) *= 1e-5;
-        process_noise_.middleRows(13, 3) *= 1e-5;
-        process_noise_.middleRows(16, 3) *= 1e-5;
+        process_noise_.middleRows(10, 3) *= 1e-6;
+        process_noise_.middleRows(13, 3) *= 1e-6;
+        process_noise_.middleRows(16, 3) *= 1e-6;
 
         // 位置(3) + 姿勢(4) = 7
         measurement_noise_ = MatrixXt::Identity(7, 7);
         measurement_noise_.middleRows(0, 3) *= 0.01;
-        measurement_noise_.middleRows(3, 4) *= 0.001;
+        measurement_noise_.middleRows(3, 4) *= 0.01;
 
         // 初期状態
         VectorXt mean(19);
@@ -87,6 +88,7 @@ public:
             );
             filter_->setMeasurementNoise(measurement_noise_);
         }
+        filter_->setMean(mean);
     }
 
     ~PoseEstimator() {}
@@ -115,6 +117,11 @@ public:
 
         VectorXt u(6); u.head<3>() = acc; u.tail<3>() = gyro;
         filter_->predict(u);
+
+        auto& state_after = const_cast<VectorXt&>(filter_->getState());
+        Eigen::Map<Quaterniont> q_pred(const_cast<SystemType*>(&state_after[6]));
+        if (std::isfinite(q_pred.w()) && q_pred.norm() > 1e-8f) q_pred.normalize();
+        else q_pred = Quaterniont::Identity();
     }
 
     /**
@@ -137,9 +144,18 @@ public:
 
         pcl::PointCloud<PointT>::Ptr aligned(new pcl::PointCloud<PointT>());
         registration_->setInputSource(cloud);
-        registration_->align(*aligned, init_guess); // 事前に設定されているregistration方法でalign (NDT_CUDA, GICP, etc.)
+        registration_->align(*aligned, init_guess); // 事前に設定されているregistration方法でalign (NDT_OMP, GICP, etc.)
 
         Matrix4t trans = registration_->getFinalTransformation();
+        bool converged = registration_->hasConverged();
+
+        if (!converged || !trans.allFinite()) {
+            RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
+                        "Alignment failed (converged=%d, finite=%d). Using init guess.",
+                        converged ? 1 : 0, trans.allFinite() ? 1 : 0);
+            trans = init_guess;
+        }
+
         Vector3t p = trans.block<3, 1>(0, 3);
         Quaterniont q(trans.block<3, 3>(0, 0));
 
@@ -150,11 +166,72 @@ public:
         observation.middleRows(3, 4) = Vector4t(q.w(), q.x(), q.y(), q.z()).normalized();
         last_observation_ = trans;
 
+
+       // --------- Mahalanobis Gate (6DOF) ----------
+       if (use_mahalanobis_) {
+            // 残差 r6 = [ Δp ; rotvec(q_obs * q_pred^{-1}) ]
+            Eigen::Matrix<double,6,1> r6;
+            {
+                const auto& s = filter_->getState();
+                // 予測姿勢
+                Eigen::Quaterniond q_pred(s[6], s[7], s[8], s[9]);
+                Eigen::Quaterniond q_obs(observation[3], observation[4], observation[5], observation[6]);
+                if (q_pred.coeffs().dot(q_obs.coeffs()) < 0.0) q_obs.coeffs() *= -1.0;
+                q_pred.normalize(); q_obs.normalize();
+                // 位置差
+                r6.head<3>() = (observation.head<3>() - s.head<3>()).cast<double>();
+                // 回転差
+                Eigen::Quaterniond q_err = q_obs * q_pred.conjugate();
+                Eigen::AngleAxisd aa(q_err);
+                Eigen::Vector3d rv = aa.axis() * aa.angle();
+                if (!rv.allFinite()) rv.setZero();
+                r6.tail<3>() = rv;
+            }
+            // 測定ノイズ 7x7 -> 6x6 射影（quat 部は等方化）
+            Eigen::Matrix<double,6,6> R6 = Eigen::Matrix<double,6,6>::Zero();
+            {
+                const auto& R7 = measurement_noise_;
+                if (R7.rows() >= 7 && R7.cols() >= 7) {
+                    R6.topLeftCorner<3,3>() = R7.topLeftCorner(3,3).cast<double>();
+                    double s = R7.block(3,3,4,4).trace() / 4.0;
+                    if (!(s > 0.0)) s = 1e-6;
+                    R6.bottomRightCorner<3,3>() = Eigen::Matrix3d::Identity() * s;
+                } else {
+                    R6.setIdentity();
+                }
+            }
+            // H: 位置3 + quat xyz を小角近似で使用
+            Eigen::Matrix<double,6,19> H = Eigen::Matrix<double,6,19>::Zero();
+            H.block<3,3>(0,0) = Eigen::Matrix3d::Identity();
+            H.block<3,3>(3,7) = Eigen::Matrix3d::Identity(); // quat x,y,z
+            Eigen::Matrix<double,6,6> S = H * filter_->getCovariance().cast<double>() * H.transpose() + R6;
+            for (int i=0;i<6;i++) if (S(i,i) < 1e-12) S(i,i) += 1e-9; // 数値安定化
+
+            Eigen::VectorXd r6v = r6;
+            last_mahalanobis_d2_ = squaredMahalanobis(r6v, Eigen::VectorXd::Zero(6), S);
+
+            if (last_mahalanobis_d2_ > mahalanobis_threshold_) {
+                RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
+                            "Mahalanobis reject d2=%.3f > thresh=%.3f (df=6)",
+                            last_mahalanobis_d2_, mahalanobis_threshold_);
+                // 棄却
+                imu_pred_error_ = imu_guess.inverse() * registration_->getFinalTransformation();
+                return aligned;
+            }
+            // --------- End Gate -------------------------
+        }
+
         wo_pred_error_ = no_guess.inverse() * registration_->getFinalTransformation();
 
         filter_->correct(observation);
+
+        auto& state_after = const_cast<VectorXt&>(filter_->getState());
+        Eigen::Map<Quaterniont> q_corr(const_cast<SystemType*>(&state_after[6]));
+        if (std::isfinite(q_corr.w()) && q_corr.norm() > 1e-8f) q_corr.normalize();
+        else q_corr = Quaterniont::Identity();
+
         imu_pred_error_ = imu_guess.inverse() * registration_->getFinalTransformation();
-                    
+        last_correct_stamp_ = stamp;
         return aligned;
     }
 
@@ -181,10 +258,17 @@ public:
         return mat;
     }
     const std::optional<Matrix4t>& wo_prediction_error() const {
-        return wo_pred_error_;
+        return wo_pred_error_; // スキャンマッチだけの相対変位
     }
     const std::optional<Matrix4t>& imu_prediction_error() const {
-        return imu_pred_error_;
+        return imu_pred_error_; // 予測と観測の残差
+    }
+
+    void setMahalanobisThreshold(double threshold) {
+        mahalanobis_threshold_ = threshold;
+    }
+    void useMahalanobisGating(bool use) {
+        use_mahalanobis_ = use;
     }
 
 
@@ -216,6 +300,11 @@ private:
     std::unique_ptr<model::UKFPoseSystemModel> ukf_system_model_;
     std::unique_ptr<model::EKFPoseSystemModel> ekf_system_model_;
     std::unique_ptr<filter::KalmanFilterX> filter_;
+
+    bool use_mahalanobis_{false};
+    double last_mahalanobis_d2_{0.0};
+    double mahalanobis_threshold_{16.81}; // 99% confidence interval for chi-squared distribution with 6 DOF
+    // (calculated by scipy.stats.chi2.ppf(0.99, df=6))
 };
 
 } // namespace hdl_localization
