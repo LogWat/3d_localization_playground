@@ -214,9 +214,12 @@ public:
                 RCLCPP_WARN(rclcpp::get_logger("PoseEstimator"),
                             "Mahalanobis reject d2=%.3f > thresh=%.3f (df=6)",
                             last_mahalanobis_d2_, mahalanobis_threshold_);
-                // 棄却
-                imu_pred_error_ = imu_guess.inverse() * registration_->getFinalTransformation();
-                return aligned;
+                // 初期状態では観測が不安定なので、rejectしても状態を更新する
+                consecutive_reject_count_++;
+                if (consecutive_reject_count_ > init_consecutive_reject_) {
+                    wo_pred_error_ = no_guess.inverse() * registration_->getFinalTransformation();  
+                    return aligned;
+                }
             }
             // --------- End Gate -------------------------
         }
@@ -305,6 +308,9 @@ private:
     double last_mahalanobis_d2_{0.0};
     double mahalanobis_threshold_{16.81}; // 99% confidence interval for chi-squared distribution with 6 DOF
     // (calculated by scipy.stats.chi2.ppf(0.99, df=6))
+
+    int consecutive_reject_count_{0};
+    const int init_consecutive_reject_{5};
 };
 
 } // namespace hdl_localization

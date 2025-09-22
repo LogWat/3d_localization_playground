@@ -298,7 +298,7 @@ private:
             tf_broadcaster_->sendTransform(odom_trans);
         }
 
-        nav_msgs::msg::Odometry::UniquePtr odom_msg(new nav_msgs::msg::Odometry);
+        nav_msgs::msg::Odometry::UniquePtr odom_msg(new nav_msgs::msg::Odometry());
         odom_msg->header.stamp = stamp;
         odom_msg->header.frame_id = "map";
         odom_msg->child_frame_id = odom_child_frame_id_;
@@ -414,14 +414,40 @@ private:
         }
         last_scan_ = downsampled_cloud;
 
-        // pose estimation (kalman filter)
+        // predict ------------------------------------------------------
+        std::vector<sensor_msgs::msg::Imu::ConstSharedPtr> local_imu;
+        {
+            std::lock_guard<std::mutex> lk(imu_buffer_mutex_);
+            local_imu.swap(imu_buffer_);
+        }
+        // 時系列になるように
+        std::sort(local_imu.begin(), local_imu.end(), [](const auto & a, const auto & b) {
+            rclcpp::Time ta(a->header.stamp.sec, a->header.stamp.nanosec);
+            rclcpp::Time tb(b->header.stamp.sec, b->header.stamp.nanosec);
+            return ta < tb;
+        });
         std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
         if (!pose_estimator_) {
             RCLCPP_ERROR(this->get_logger(), "Waiting for initial pose input!");
             return;
         }
-        // Eigen::Matrix4f before_pose = pose_estimator_->matrix();
-
+        for (const auto& imu_msg : local_imu) {
+            const auto imu_stamp = rclcpp::Time(imu_msg->header.stamp.sec, imu_msg->header.stamp.nanosec);
+            if (imu_stamp < stamp) { // 過去のimuデータはバッファに戻す
+                std::lock_guard<std::mutex> lk(imu_buffer_mutex_);
+                imu_buffer_.push_back(imu_msg);
+                continue;
+            }
+            Eigen::Vector3f acc(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
+            Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
+            if (invert_acc_) acc = -acc;
+            if (invert_gyro_) gyro = -gyro;
+            try {
+                pose_estimator_->predict(imu_stamp, acc, gyro);
+            } catch (const std::exception & e) {
+                RCLCPP_ERROR(this->get_logger(), "Pose prediction failed: %s", e.what());
+            }
+        }
         auto imu_iter = imu_buffer_.begin();
         for (; imu_iter != imu_buffer_.end(); ++imu_iter) {
             const auto& imu_msg = *imu_iter;
@@ -431,13 +457,18 @@ private:
             Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
             if (invert_acc_) acc = -acc;
             if (invert_gyro_) gyro = -gyro;
-            pose_estimator_->predict(stamp, acc, gyro);
+            pose_estimator_->predict(imu_stamp, acc, gyro);
         }
-        imu_buffer_.erase(imu_buffer_.begin(), imu_iter); // remove processed imu messages
-        
 
-        // correct
+        // correct ------------------------------------------------------
         auto aligned = pose_estimator_->correct(stamp, downsampled_cloud);
+
+        // NAN guard
+        Eigen::Matrix4f pose = pose_estimator_->matrix();
+        if (!pose.allFinite()) {
+            RCLCPP_ERROR(this->get_logger(), "Estimated pose has NaN. Resetting pose estimator.");
+            return;
+        }
 
         if (aligned_pub_->get_subscription_count() > 0) {
             sensor_msgs::msg::PointCloud2::UniquePtr aligned_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
