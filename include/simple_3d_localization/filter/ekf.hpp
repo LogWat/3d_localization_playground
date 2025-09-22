@@ -7,10 +7,7 @@
 
 namespace s3l::filter {
 
-template <typename T>
-class ExtendedKalmanFilterX : public KalmanFilterX<T> {
-    using VectorXt = Eigen::Matrix<T, Eigen::Dynamic, 1>;
-    using MatrixXt = Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>;
+class ExtendedKalmanFilterX : public KalmanFilterX {
 public:
     explicit ExtendedKalmanFilterX(
         model::ekf::EKFSystemModel& model,
@@ -19,20 +16,6 @@ public:
         const MatrixXt& initial_cov,
         const MatrixXt& process_noise)
         : state_dim_(state_dim), model_(model), X_(initial_state), P_(initial_cov), Q_(process_noise) {}
-
-    /**
-     * @brief Predict the next state and update the state covariance
-     * @param dt Time step for prediction
-     */
-    void predict(const double dt) {
-        double dt_c = std::max(std::min(dt, 1.0), 1e-6); // Clamp dt to avoid instability
-        model_.setDt(dt_c);
-        VectorXt X_pred = model_.f(X_);
-        MatrixXt F = model_.stateTransitionJacobian(X_);
-        MatrixXt P_pred = F * P_ * F.transpose() + Q_ * dt_c;
-        X_ = X_pred;
-        P_ = P_pred;
-    }
 
     /**
      * @brief Predict the next state with control input
@@ -78,12 +61,11 @@ public:
     void setMeasurementNoise(const MatrixXt& measurement_noise) override {
         R_ = measurement_noise;
     }
-    void predict() override { predict(last_dt_); }
     void predict(const VectorXt& control) override { predict(last_dt_, control); }
     void correct(const VectorXt& measurement) override { correct(measurement, R_); }
 
-    const VectorXt& getState() const override { return X_; }
-    const MatrixXt& getCovariance() const override { return P_; }
+    [[nodiscard]] const VectorXt& getState() const override { return X_; }
+    [[nodiscard]] const MatrixXt& getCovariance() const override { return P_; }
 
 private:
     const int state_dim_;

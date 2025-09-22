@@ -29,7 +29,6 @@
 #include <small_gicp/util/downsampling_omp.hpp>
 
 #include <simple_3d_localization/hdl_localization/pose_estimator.hpp>
-#include <simple_3d_localization/hdl_localization/delta_estimator.hpp>
 
 #include <simple_3d_localization/type.hpp>
 #include <simple_3d_localization/msg/scan_matching_status.hpp>
@@ -49,21 +48,22 @@ public:
     : rclcpp::Node("s3l_hdl_localization", options), tf_buffer_(this->get_clock()), tf_listener_(tf_buffer_) {
         robot_odom_frame_id_ = this->declare_parameter<std::string>("robot_odom_frame_id", "odom");
         odom_child_frame_id_ = this->declare_parameter<std::string>("odom_child_frame_id", "base_link");
+        scanmatch_frame_id_ = this->declare_parameter<std::string>("scanmatch_frame_id", "ndt_base_link");
         reg_method_ = this->declare_parameter<std::string>("registration_method", "ndt_omp"); // "ndt_cuda", "ndt_omp", "gicp", "vgicp"
         ndt_neighbor_search_method_ = this->declare_parameter<std::string>("ndt_neighbor_search_method", "DIRECT7");
-        use_imu_ = this->declare_parameter<bool>("use_imu", true);
-        use_imu_initializer_ = this->declare_parameter<bool>("use_imu_initializer", true);
-        imu_initialized_ = use_imu_initializer_ && use_imu_ ? false : true;
+        use_imu_initializer_ = this->declare_parameter<bool>("use_imu_initializer", false);
+        imu_initialized_ = use_imu_initializer_ ? false : true;
         invert_acc_ = this->declare_parameter<bool>("invert_acc", false);
         invert_gyro_ = this->declare_parameter<bool>("invert_gyro", false);
         use_omp_ = this->declare_parameter<bool>("use_omp", true);
-        odometry_based_prediction_ = this->declare_parameter<bool>("odometry_based_prediction", false);
         downsample_leaf_size_ = this->declare_parameter<double>("downsample_leaf_size", 0.1);
         gicp_correspondence_randomness_ = this->declare_parameter<int>("gicp_correspondence_randomness", 20);
         gicp_max_correspondence_distance_ = this->declare_parameter<double>("gicp_max_correspondence_distance", 1.0);
         gicp_voxel_resolution_ = this->declare_parameter<double>("gicp_voxel_resolution", 1.0);
         num_threads_ = this->declare_parameter<int>("num_threads", 8);
         cool_time_duration_ = this->declare_parameter<double>("cool_time_duration", 0.5);
+        use_mahalanobis_gating_ = this->declare_parameter<bool>("use_mahalanobis_gating", false);
+        mahalanobis_threshold_ = this->declare_parameter<double>("mahalanobis_threshold", 33.11);
 
         ndt_neighbor_search_radius_ = this->declare_parameter<double>("ndt_neighbor_search_radius", 2.0);
         ndt_resolution_ = this->declare_parameter<double>("ndt_resolution", 1.0);
@@ -75,7 +75,7 @@ public:
             // TODO 実装
         }
 
-        if (use_imu_ && !imu_initialized_) {
+        if (!imu_initialized_) {
             RCLCPP_INFO(this->get_logger(), "Waiting for IMU initialization...");
             initial_g_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
                 "imu_init/gravity", rclcpp::QoS(1).transient_local(),
@@ -86,7 +86,7 @@ public:
             initial_bg_sub_ = this->create_subscription<geometry_msgs::msg::Vector3>(
                 "imu_init/gyro_bias", rclcpp::QoS(1).transient_local(),
                 std::bind(&LocalizationNode::initialGyroBiasCallback, this, std::placeholders::_1));
-        } else if (use_imu_ && imu_initialized_) {
+        } else if (imu_initialized_) {
             RCLCPP_INFO(this->get_logger(), "IMU initialization is skipped. Using provided parameters.");
         } else {
             RCLCPP_WARN(this->get_logger(), "IMU is not used.");
@@ -146,7 +146,6 @@ public:
 
         // global localization setup
         relocalizing_ = false;
-        delta_estimater_.reset(new DeltaEstimator(registration_));
 
         // initialize pose estimator
         specify_init_pose_ = this->declare_parameter<bool>("specify_init_pose", false);
@@ -159,12 +158,14 @@ public:
                 return;
             }
             Eigen::Vector3f pos(init_pose[0], init_pose[1], init_pose[2]);
-            Eigen::Quaternionf quat(init_quat[0], init_quat[1], init_quat[2], init_quat[3]);
+            Eigen::Quaternionf quat(init_quat[3], init_quat[0], init_quat[1], init_quat[2]);
             pose_estimator_ = std::make_unique<PoseEstimator>(
                 registration_, pos, quat, filter_type_, cool_time_duration_
             );
+            pose_estimator_->useMahalanobisGating(use_mahalanobis_gating_);
+            pose_estimator_->setMahalanobisThreshold(mahalanobis_threshold_);
             est_initialized_ = true;
-            if (imu_initialized_ && use_imu_) {
+            if (imu_initialized_) {
                 RCLCPP_INFO(this->get_logger(), "Initializing pose estimator with IMU parameters.");
                 pose_estimator_->initializeWithBiasAndGravity(imu_gravity_, imu_accel_bias_, imu_gyro_bias_);
             }
@@ -189,7 +190,6 @@ private:
         }
         
         relocalizing_ = true;
-        delta_estimater_->reset();
         PointCloudT::ConstPtr scan = last_scan_;
 
         // TODO: hdl global localization implementation
@@ -261,6 +261,16 @@ private:
 
     
     void publishOdometry(const rclcpp::Time& stamp, const Eigen::Matrix4f& pose) {
+        // 入力 pose 検証
+        if (!pose.allFinite()) {
+            RCLCPP_WARN(this->get_logger(), "publishOdometry: pose has NaN. Skipping TF/odom publish.");
+            return;
+        }
+        Eigen::Quaterniond q(pose.block<3,3>(0,0).cast<double>());
+        if (!std::isfinite(q.w()) || q.norm() < 1e-10) {
+            RCLCPP_WARN(this->get_logger(), "publishOdometry: invalid quaternion. Skipping.");
+            return;
+        }
         geometry_msgs::msg::TransformStamped map_wrt_frame = tf2::eigenToTransform(Eigen::Isometry3d(pose.inverse().cast<double>()));
         map_wrt_frame.header.stamp = stamp;
         map_wrt_frame.header.frame_id = robot_odom_frame_id_;
@@ -288,7 +298,7 @@ private:
             tf_broadcaster_->sendTransform(odom_trans);
         }
 
-        nav_msgs::msg::Odometry::UniquePtr odom_msg(new nav_msgs::msg::Odometry);
+        nav_msgs::msg::Odometry::UniquePtr odom_msg(new nav_msgs::msg::Odometry());
         odom_msg->header.stamp = stamp;
         odom_msg->header.frame_id = "map";
         odom_msg->child_frame_id = odom_child_frame_id_;
@@ -327,6 +337,16 @@ private:
         status->inlier_fraction = static_cast<float>(num_inliers) / std::max(1, num_valid_points);
         status->relative_pose = tf2::eigenToTransform(Eigen::Isometry3d(registration_->getFinalTransformation().cast<double>())).transform;
 
+        if (tf_broadcaster_) {
+            geometry_msgs::msg::TransformStamped ndt_tf = tf2::eigenToTransform(
+                Eigen::Isometry3d(registration_->getFinalTransformation().cast<double>())
+            );
+            ndt_tf.header = header;
+            ndt_tf.header.frame_id = "map";
+            ndt_tf.child_frame_id = scanmatch_frame_id_;
+            tf_broadcaster_->sendTransform(ndt_tf);
+        }
+
         status->prediction_labels.reserve(2);
         status->prediction_errors.reserve(2);
         std::vector<double> errors(6, 0.0);
@@ -338,13 +358,8 @@ private:
         }
         if (pose_estimator_->imu_prediction_error()) {
             status->prediction_labels.push_back(std_msgs::msg::String{});
-            status->prediction_labels.back().data = use_imu_ ? "imu" : "motion model";
+            status->prediction_labels.back().data = "imu";
             status->prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->imu_prediction_error().value().cast<double>())).transform);
-        }
-        if (pose_estimator_->odom_prediction_error()) {
-            status->prediction_labels.push_back(std_msgs::msg::String{});
-            status->prediction_labels.back().data = "odometry";
-            status->prediction_errors.push_back(tf2::eigenToTransform(Eigen::Isometry3d(pose_estimator_->odom_prediction_error().value().cast<double>())).transform);
         }
 
         status_pub_->publish(std::move(status));
@@ -361,7 +376,7 @@ private:
             return;
         }
 
-        if (use_imu_ && !imu_initialized_) {
+        if (!imu_initialized_) {
             RCLCPP_WARN(this->get_logger(), "IMU is not initialized yet. Ignoring point cloud.");
             return;
         }
@@ -399,48 +414,61 @@ private:
         }
         last_scan_ = downsampled_cloud;
 
-        if (relocalizing_) delta_estimater_->add_frame(downsampled_cloud);
-
-        // pose estimation (kalman filter)
+        // predict ------------------------------------------------------
+        std::vector<sensor_msgs::msg::Imu::ConstSharedPtr> local_imu;
+        {
+            std::lock_guard<std::mutex> lk(imu_buffer_mutex_);
+            local_imu.swap(imu_buffer_);
+        }
+        // 時系列になるように
+        std::sort(local_imu.begin(), local_imu.end(), [](const auto & a, const auto & b) {
+            rclcpp::Time ta(a->header.stamp.sec, a->header.stamp.nanosec);
+            rclcpp::Time tb(b->header.stamp.sec, b->header.stamp.nanosec);
+            return ta < tb;
+        });
         std::lock_guard<std::mutex> lock(pose_estimator_mutex_);
         if (!pose_estimator_) {
             RCLCPP_ERROR(this->get_logger(), "Waiting for initial pose input!");
             return;
         }
-        // Eigen::Matrix4f before_pose = pose_estimator_->matrix();
-        if (!use_imu_) {
-            pose_estimator_->predict(stamp);
-        } else {
-            std::lock_guard<std::mutex> lock(imu_buffer_mutex_);
-            auto imu_iter = imu_buffer_.begin();
-            for (; imu_iter != imu_buffer_.end(); ++imu_iter) {
-                const auto& imu_msg = *imu_iter;
-                const auto& imu_stamp = rclcpp::Time(imu_msg->header.stamp.sec, imu_msg->header.stamp.nanosec);
-                if (imu_stamp > stamp) break;
-                Eigen::Vector3f acc(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
-                Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
-                if (invert_acc_) acc = -acc;
-                if (invert_gyro_) gyro = -gyro;
-                pose_estimator_->predict(stamp, acc, gyro);
+        for (const auto& imu_msg : local_imu) {
+            const auto imu_stamp = rclcpp::Time(imu_msg->header.stamp.sec, imu_msg->header.stamp.nanosec);
+            if (imu_stamp < stamp) { // 過去のimuデータはバッファに戻す
+                std::lock_guard<std::mutex> lk(imu_buffer_mutex_);
+                imu_buffer_.push_back(imu_msg);
+                continue;
             }
-            imu_buffer_.erase(imu_buffer_.begin(), imu_iter); // remove processed imu messages
-        }
-
-        // odometry-based prediction
-        rclcpp::Time last_correction_time = pose_estimator_->last_correct_time();
-        if (odometry_based_prediction_ && last_correction_time > rclcpp::Time(0)) {
+            Eigen::Vector3f acc(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
+            Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
+            if (invert_acc_) acc = -acc;
+            if (invert_gyro_) gyro = -gyro;
             try {
-                geometry_msgs::msg::TransformStamped odom_transform = tf_buffer_.lookupTransform(
-                    robot_odom_frame_id_, odom_child_frame_id_, last_correction_time, rclcpp::Duration::from_seconds(0.1));
-                Eigen::Matrix4f odom_delta = tf2::transformToEigen(odom_transform).matrix().cast<float>();
-                pose_estimator_->predict_odom(odom_delta);
-            } catch (const tf2::TransformException & ex) {
-                RCLCPP_ERROR(this->get_logger(), "Failed to get odometry transform: %s", ex.what());
+                pose_estimator_->predict(imu_stamp, acc, gyro);
+            } catch (const std::exception & e) {
+                RCLCPP_ERROR(this->get_logger(), "Pose prediction failed: %s", e.what());
             }
         }
+        auto imu_iter = imu_buffer_.begin();
+        for (; imu_iter != imu_buffer_.end(); ++imu_iter) {
+            const auto& imu_msg = *imu_iter;
+            const auto& imu_stamp = rclcpp::Time(imu_msg->header.stamp.sec, imu_msg->header.stamp.nanosec);
+            if (imu_stamp > stamp) break;
+            Eigen::Vector3f acc(imu_msg->linear_acceleration.x, imu_msg->linear_acceleration.y, imu_msg->linear_acceleration.z);
+            Eigen::Vector3f gyro(imu_msg->angular_velocity.x, imu_msg->angular_velocity.y, imu_msg->angular_velocity.z);
+            if (invert_acc_) acc = -acc;
+            if (invert_gyro_) gyro = -gyro;
+            pose_estimator_->predict(imu_stamp, acc, gyro);
+        }
 
-        // correct
+        // correct ------------------------------------------------------
         auto aligned = pose_estimator_->correct(stamp, downsampled_cloud);
+
+        // NAN guard
+        Eigen::Matrix4f pose = pose_estimator_->matrix();
+        if (!pose.allFinite()) {
+            RCLCPP_ERROR(this->get_logger(), "Estimated pose has NaN. Resetting pose estimator.");
+            return;
+        }
 
         if (aligned_pub_->get_subscription_count() > 0) {
             sensor_msgs::msg::PointCloud2::UniquePtr aligned_msg = std::make_unique<sensor_msgs::msg::PointCloud2>();
@@ -468,8 +496,10 @@ private:
             filter_type_,
             cool_time_duration_
         ));
+        pose_estimator_->useMahalanobisGating(use_mahalanobis_gating_);
+        pose_estimator_->setMahalanobisThreshold(mahalanobis_threshold_);
         est_initialized_ = true;
-        if (imu_initialized_ && use_imu_) {
+        if (imu_initialized_) {
             pose_estimator_->initializeWithBiasAndGravity(imu_gravity_, imu_accel_bias_, imu_gyro_bias_);
         }
     }
@@ -517,7 +547,7 @@ private:
     }
 
 
-    void initialGravityCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& msg) {
+    void initialGravityCallback(const geometry_msgs::msg::Vector3::ConstSharedPtr& _msg) {
         // imu_gravity_ = Eigen::Vector3f(msg->x, msg->y, msg->z);
         imu_gravity_ = Eigen::Vector3f(0, 0, -9.80665); // TODO: imu_initializer(local) ⇔ this (global)の差をなんとかする
         has_init_g = true;
@@ -554,7 +584,7 @@ private:
     }
 
     // variables ------------------------------------------------------------------------------------
-    std::string robot_odom_frame_id_, odom_child_frame_id_;
+    std::string robot_odom_frame_id_, odom_child_frame_id_, scanmatch_frame_id_;
     std::string reg_method_, ndt_neighbor_search_method_;
     double ndt_neighbor_search_radius_;
     double ndt_resolution_;
@@ -563,11 +593,13 @@ private:
     double gicp_voxel_resolution_;
     int num_threads_;
 
-    bool use_imu_, use_imu_initializer_, imu_initialized_;
+    bool use_imu_initializer_, imu_initialized_;
     bool invert_acc_, invert_gyro_;
-    bool odometry_based_prediction_;
     bool use_omp_;
     bool specify_init_pose_;
+    bool use_mahalanobis_gating_;
+
+    double mahalanobis_threshold_;
 
     FilterType filter_type_; // ekf, ukf
 
@@ -612,7 +644,6 @@ private:
     // global localization
     bool use_global_localization_;
     std::atomic_bool relocalizing_;
-    std::unique_ptr<DeltaEstimator> delta_estimater_;
 
     pcl::PointCloud<PointT>::ConstPtr last_scan_;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr relocalize_srv_;

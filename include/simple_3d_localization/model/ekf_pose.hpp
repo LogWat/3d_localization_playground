@@ -84,7 +84,7 @@ public:
         // Update position and velocity based on control input
         next_state.head(3) = pt + vt * dt_ + 0.5 * acc_global * dt_ * dt_;
         next_state.segment(3, 3) = vt + acc_global * dt_;
-        Quaterniont next_q(qt * Sophus::SO3<T>::exp(gyro * dt_).matrix());
+        Quaterniont next_q(qt * Sophus::SO3<SystemType>::exp(gyro * dt_).matrix());
         next_q.normalize();
         next_state(6) = next_q.w();
         next_state(7) = next_q.x();
@@ -105,7 +105,7 @@ public:
     VectorXt h(const VectorXt& state) const override {
         VectorXt measurement(7);
         measurement.head(3) = state.head(3); // Position
-        measurement.segment(3, 4) = state.segment(6, 4); // Quaternion coefficients (修正: インデックスを6に変更)
+        measurement.segment(3, 4) = state.segment(6, 4); // Quaternion coefficients 
         return measurement;
     }
 
@@ -119,7 +119,7 @@ private:
     MatrixXt measurementJacobian(const VectorXt& state) const override {
         MatrixXt H = MatrixXt::Zero(7, state.size());
         H.block<3, 3>(0, 0) = MatrixXt::Identity(3, 3); // Position Jacobian
-        H.block<4, 4>(3, 6) = MatrixXt::Identity(4, 4); // Quaternion Jacobian (修正: インデックスを6に変更)
+        H.block<4, 4>(3, 6) = MatrixXt::Identity(4, 4); // Quaternion Jacobian 
         return H;
     }
 
@@ -163,14 +163,14 @@ private:
         const Quaterniont qt(state(6), state(7), state(8), state(9));
         const MatrixXt R = qt.toRotationMatrix();
         const Vector3t bias_acc = state.middleRows(10, 3);
-        // const Vector3t bias_gyro = state.middleRows(13, 3); // 未使用なのでコメントアウト
-        // const Vector3t gravity = state.middleRows(16, 3); // 未使用なのでコメントアウト
+        // const Vector3t bias_gyro = state.middleRows(13, 3);
+        // const Vector3t gravity = state.middleRows(16, 3); 
 
         const Vector3t raw_acc(control.head(3));
         const Vector3t raw_gyro(control.tail(3));
         const Vector3t acc_corrected = raw_acc - bias_acc;
 
-        const Eigen::Matrix<T, 3, 4> dR_dq_result = dR_dq(qt, acc_corrected);
+        const Eigen::Matrix<SystemType, 3, 4> dR_dq_result = dR_dq(qt, acc_corrected);
 
         // Position Jacobian
         F.block<3, 3>(0, 0) = MatrixXt::Identity(3, 3);
@@ -204,29 +204,29 @@ private:
      * @param acc_c Corrected acceleration
      * @return Jacobian matrix of the rotation matrix with respect to quaternion coefficients
      */
-    Eigen::Matrix<T, 3, 4> dR_dq(const Quaterniont& qt, const Vector3t& acc_c) const {
-        Eigen::Matrix<T, 3, 4> result;
-        T qw = qt.w(), qx = qt.x(), qy = qt.y(), qz = qt.z();
-        T ax = acc_c.x(), ay = acc_c.y(), az = acc_c.z();
+    Eigen::Matrix<SystemType, 3, 4> dR_dq(const Quaterniont& qt, const Vector3t& acc_c) const {
+        Eigen::Matrix<SystemType, 3, 4> result;
+        SystemType qw = qt.w(), qx = qt.x(), qy = qt.y(), qz = qt.z();
+        SystemType ax = acc_c.x(), ay = acc_c.y(), az = acc_c.z();
 
         // ∂(R*a')/∂qw
-        result.col(0) << 2 * (qw * ax + qz * ay - qy * az),
-                         2 * (-qz * ax + qw * ay + qx * az),
-                         2 * (qy * ax - qx * ay + qw * az);
+        result.col(0) << 2 * (qw * ax - qz * ay + qy * az),
+                         2 * (qw * ay + qz * ax - qx * az),
+                         2 * (qw * az - qy * ax + qx * ay);
                          
         // ∂(R*a')/∂qx
         result.col(1) << 2 * (qx * ax + qy * ay + qz * az),
-                         2 * (qy * ax - qx * ay + qw * az),
-                         2 * (-qz * ax - qw * ay - qx * az);
+                         2 * (qy * ax - qx * ay - qw * az),
+                         2 * (qz * ax + qw * ay - qx * az);
 
         // ∂(R*a')/∂qy
-        result.col(2) << 2 * (-qy * ax + qx * ay - qw * az),
+        result.col(2) << 2 * (-qy * ax + qx * ay + qw * az),
                          2 * (qx * ax + qy * ay + qz * az),
-                         2 * (-qw * ax - qz * ay + qy * az);
+                         2 * (-qw * ax + qz * ay - qy * az);
                          
         // ∂(R*a')/∂qz
-        result.col(3) << 2 * (-qz * ax + qw * ay + qx * az),
-                         2 * (qw * ax + qz * ay - qy * az),
+        result.col(3) << 2 * (-qz * ax - qw * ay + qx * az),
+                         2 * (qw * ax - qz * ay + qy * az),
                          2 * (qx * ax + qy * ay + qz * az);
 
         return result;
@@ -238,19 +238,19 @@ private:
      * @param dt Time step
      * @return Jacobian matrix of the quaternion with respect to previous quaternion
      */
-    Eigen::Matrix<T, 4, 4> dq_dqp(const Vector3t& gyro, const double dt) const {
-        Eigen::Matrix<T, 4, 4> result;
-        T half_dt = 0.5 * dt;
+    Eigen::Matrix<SystemType, 4, 4> dq_dqp(const Vector3t& gyro, const double dt) const {
+        Eigen::Matrix<SystemType, 4, 4> result;
+        SystemType half_dt = 0.5 * dt;
         if (gyro.norm() < 1e-8) {
             // Small angle approximation
-            result = Eigen::Matrix<T, 4, 4>::Identity();
+            result = Eigen::Matrix<SystemType, 4, 4>::Identity();
         } else {
-            T norm = gyro.norm();
-            T dqw = cos(half_dt * norm);
-            T factor = sin(half_dt * norm) / norm;
-            T dqx = factor * gyro.x();
-            T dqy = factor * gyro.y();
-            T dqz = factor * gyro.z();
+            SystemType norm = gyro.norm();
+            SystemType dqw = cos(half_dt * norm);
+            SystemType factor = sin(half_dt * norm) / norm;
+            SystemType dqx = factor * gyro.x();
+            SystemType dqy = factor * gyro.y();
+            SystemType dqz = factor * gyro.z();
 
             result << dqw, -dqx, -dqy, -dqz,
                       dqx,  dqw,  dqz, -dqy,
@@ -266,15 +266,15 @@ private:
      * @param dt Time step
      * @return Jacobian matrix of the quaternion with respect to bias gyro
      */
-    Eigen::Matrix<T, 4, 3> dq_dbg(const Quaterniont& qt, const double dt) const {
-        Eigen::Matrix<T, 4, 3> result;
-        T qw = qt.w(), qx = qt.x(), qy = qt.y(), qz = qt.z();
-        T half_dt = 0.5 * dt;
+    Eigen::Matrix<SystemType, 4, 3> dq_dbg(const Quaterniont& qt, const double dt) const {
+        Eigen::Matrix<SystemType, 4, 3> result;
+        SystemType qw = qt.w(), qx = qt.x(), qy = qt.y(), qz = qt.z();
+        SystemType half_dt = 0.5 * dt;
 
         // ∂(q(k))/∂(bias_gyro) = [q(k-1)]L * ∂(q(dq))/∂(bias_gyro) (連鎖率)
 
         // 左クォータニオン積行列
-        // Eigen::Matrix<T, 4, 4> left_quat_mult;
+        // Eigen::Matrix<SystemType, 4, 4> left_quat_mult;
         // left_quat_mult << qw, -qx, -qy, -qz,
         //                   qx,  qw, -qz,  qy,
         //                   qy,  qz,  qw, -qx,

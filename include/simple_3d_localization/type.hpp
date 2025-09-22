@@ -2,6 +2,14 @@
 
 #include <Eigen/Core>
 
+using SystemType = float;
+using VectorXt = Eigen::Matrix<SystemType, Eigen::Dynamic, 1>;
+using MatrixXt = Eigen::Matrix<SystemType, Eigen::Dynamic, Eigen::Dynamic>;
+using Vector3t = Eigen::Matrix<SystemType, 3, 1>;
+using Vector4t = Eigen::Matrix<SystemType, 4, 1>;
+using Matrix4t = Eigen::Matrix<SystemType, 4, 4>;
+using Quaterniont = Eigen::Quaternion<SystemType>;
+
 enum FilterType {
     UKF,
     EKF
