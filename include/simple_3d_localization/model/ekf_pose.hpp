@@ -210,23 +210,23 @@ private:
         SystemType ax = acc_c.x(), ay = acc_c.y(), az = acc_c.z();
 
         // ∂(R*a')/∂qw
-        result.col(0) << 2 * (qw * ax + qz * ay - qy * az),
-                         2 * (-qz * ax + qw * ay + qx * az),
-                         2 * (qy * ax - qx * ay + qw * az);
+        result.col(0) << 2 * (qw * ax - qz * ay + qy * az),
+                         2 * (qw * ay + qz * ax - qx * az),
+                         2 * (qw * az - qy * ax + qx * ay);
                          
         // ∂(R*a')/∂qx
         result.col(1) << 2 * (qx * ax + qy * ay + qz * az),
-                         2 * (qy * ax - qx * ay + qw * az),
-                         2 * (-qz * ax - qw * ay - qx * az);
+                         2 * (qy * ax - qx * ay - qw * az),
+                         2 * (qz * ax + qw * ay - qx * az);
 
         // ∂(R*a')/∂qy
-        result.col(2) << 2 * (-qy * ax + qx * ay - qw * az),
+        result.col(2) << 2 * (-qy * ax + qx * ay + qw * az),
                          2 * (qx * ax + qy * ay + qz * az),
-                         2 * (-qw * ax - qz * ay + qy * az);
+                         2 * (-qw * ax + qz * ay - qy * az);
                          
         // ∂(R*a')/∂qz
-        result.col(3) << 2 * (-qz * ax + qw * ay + qx * az),
-                         2 * (qw * ax + qz * ay - qy * az),
+        result.col(3) << 2 * (-qz * ax - qw * ay + qx * az),
+                         2 * (qw * ax - qz * ay + qy * az),
                          2 * (qx * ax + qy * ay + qz * az);
 
         return result;
