@@ -163,15 +163,29 @@ private:
         const int n = mean.size();
         assert(cov.rows() == n && cov.cols() == n);
 
+        MatrixXt scaled = (n + lambda_) * cov;
+
         // 共分散行列のコレスキー分解を計算
         Eigen::LLT<MatrixXt> llt;
-        llt.compute((n + lambda_) * cov);
+        double jitter = 0.0;
+        bool success = false;
+        for (int attempt = 0; attempt < 6; ++attempt) {
+            llt.compute(scaled + jitter * MatrixXt::Identity(n, n));
+            if (llt.info() == Eigen::Success) {
+                success = true;
+                break;
+            }
+            jitter = (jitter == 0.0) ? 1e-9 : jitter * 10;
+        }
+        if (!success) {
+            throw std::runtime_error("Cholesky decomposition failed in computeSigmaPoints");
+        }
         MatrixXt l = llt.matrixL();
-
-        sigma_points.row(0) = mean;
-        for (int i = 0; i < n; ++i) {
-            sigma_points.row(1 + i * 2) = mean + l.col(i);
-            sigma_points.row(2 + i * 2) = mean - l.col(i);
+        // シグマ点の計算
+        sigma_points.row(0) = mean.transpose();
+        for (int i = 0; i < n; i++) {
+            sigma_points.row(i + 1) = (mean + l.col(i)).transpose();
+            sigma_points.row(i + 1 + n) = (mean - l.col(i)).transpose();
         }
     }
 
